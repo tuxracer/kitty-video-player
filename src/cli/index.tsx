@@ -3,8 +3,9 @@
  * Executable CLI entry (built as dist/cli.js, the package bin). Parses argv,
  * guards on terminal capability, then hands either a procedural or an
  * ffmpeg-decoded FrameSource and a kitty-motion Screen to the Ink Video component.
- * Importing this module runs the CLI, so tests import parseCliArgs from
- * ./parseCliArgs.ts directly.
+ * In half-block mode the Screen goes to runFallbackPlayer instead and Ink
+ * never renders. Importing this module runs the CLI, so tests import
+ * parseCliArgs from ./parseCliArgs.ts directly.
  */
 import { render } from 'ink';
 import { createScreen } from 'kitty-motion';
@@ -88,7 +89,7 @@ try {
   process.exit(EXIT_USAGE);
 }
 
-// Half-block mode never touches Ink: the cell renderer owns the whole
+// Half-block mode never touches Ink. The cell renderer owns the whole
 // screen and produces no placeholder rows to lay out. The playback loop
 // resolves when the user quits, with the screen disposed and source closed.
 if (halfBlock) {

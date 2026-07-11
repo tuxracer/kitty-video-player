@@ -20,9 +20,10 @@ export * from './types.ts';
  * trick as the Video module's managedScreen. renderMode forced to
  * "half-block" skips the graphics probe, which matters because an
  * unsupported terminal may never answer probe queries. fileTransfer false
- * and dirtyRects false skip the remaining probes. Full-screen destructive
- * mode: kitty-motion clears the screen, fits and centers the frame, follows
- * terminal resizes via autoResize, and restores the terminal on dispose.
+ * and dirtyRects false skip the remaining probes. Runs in full-screen
+ * destructive mode, so kitty-motion clears the screen, fits and centers the
+ * frame, follows terminal resizes via autoResize, and restores the terminal
+ * on dispose.
  */
 export const createFallbackScreen = (info: FrameSourceInfo): Screen =>
   new Screen({
