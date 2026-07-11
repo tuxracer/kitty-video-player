@@ -24,6 +24,7 @@ export const parseCliArgs = (argv: string[]): ParsedCliArgs => {
       options: {
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'v' },
+        'half-block': { type: 'boolean' },
       },
     });
     if (values.help) {
@@ -39,9 +40,9 @@ export const parseCliArgs = (argv: string[]): ParsedCliArgs => {
       };
     }
     if (positionals.length === 1) {
-      return { action: 'play', file: positionals[0] };
+      return { action: 'play', file: positionals[0], halfBlock: values['half-block'] === true };
     }
-    return { action: 'play' };
+    return { action: 'play', halfBlock: values['half-block'] === true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { action: 'usage-error', message };

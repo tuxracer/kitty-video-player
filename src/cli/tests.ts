@@ -6,7 +6,7 @@ import { parseCliArgs } from './parseCliArgs.ts';
 
 describe('parseCliArgs', () => {
   it('returns play when no arguments are given', () => {
-    expect(parseCliArgs([])).toEqual({ action: 'play' });
+    expect(parseCliArgs([])).toEqual({ action: 'play', halfBlock: false });
   });
 
   it('returns help for --help', () => {
@@ -26,7 +26,23 @@ describe('parseCliArgs', () => {
   });
 
   it('returns play with the file for a positional argument', () => {
-    expect(parseCliArgs(['movie.mp4'])).toEqual({ action: 'play', file: 'movie.mp4' });
+    expect(parseCliArgs(['movie.mp4'])).toEqual({
+      action: 'play',
+      file: 'movie.mp4',
+      halfBlock: false,
+    });
+  });
+
+  it('returns play with halfBlock for --half-block', () => {
+    expect(parseCliArgs(['--half-block'])).toEqual({ action: 'play', halfBlock: true });
+  });
+
+  it('combines --half-block with a file argument', () => {
+    expect(parseCliArgs(['--half-block', 'movie.mp4'])).toEqual({
+      action: 'play',
+      file: 'movie.mp4',
+      halfBlock: true,
+    });
   });
 
   it('returns usage-error for more than one positional argument', () => {

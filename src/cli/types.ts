@@ -3,6 +3,8 @@ export interface PlayAction {
   action: 'play';
   /** Path of the video file to play (the positional argument) */
   file?: string;
+  /** Skip terminal detection and play with the half-block renderer (--half-block) */
+  halfBlock: boolean;
 }
 
 /** Print HELP_TEXT to stdout and exit 0 (--help / -h) */

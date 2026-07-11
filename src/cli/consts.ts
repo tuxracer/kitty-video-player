@@ -21,15 +21,19 @@ Usage:
 Options:
   -h, --help              print this help and exit
   -v, --version           print the version and exit
+      --half-block        play with the half-block cell renderer instead of
+                          kitty graphics (works on any terminal and inside
+                          tmux or screen, reduced quality, no on-screen UI)
 
 Controls:
   space                   play or pause
   left/right arrow        seek 5 seconds
   q or Ctrl-C             quit
+  (the same keys work in half-block mode, there is just no on-screen UI)
 
-Requires an interactive Kitty or Ghostty terminal (Kitty graphics protocol
-with Unicode placeholder support). On other terminals kitty-player prints a
-notice and exits without drawing.`;
+The full player requires an interactive Kitty or Ghostty terminal (Kitty
+graphics protocol with Unicode placeholder support) outside tmux/screen.
+On other terminals kitty-player offers to play in half-block mode instead.`;
 
 /** Printed to stderr when stdout is not an interactive placeholder-capable terminal */
 export const UNSUPPORTED_TERMINAL_MESSAGE =
