@@ -1,3 +1,5 @@
+import type { FallbackReason } from './types.ts';
+
 /**
  * Package version printed by --version. Kept as a literal because importing
  * package.json from outside src/ breaks the tsconfig include. Keep in sync
@@ -39,3 +41,14 @@ On other terminals kitty-player offers to play in half-block mode instead.`;
 export const UNSUPPORTED_TERMINAL_MESSAGE =
   'kitty-player needs an interactive Kitty or Ghostty terminal (Kitty graphics ' +
   'protocol with Unicode placeholder support). Nothing was drawn.';
+
+/** First line of the warning printed before the half-block prompt */
+export const FALLBACK_WARNING_HEADER = 'kitty-player: the full player cannot run here:';
+
+/** One warning line per fallback reason, printed under FALLBACK_WARNING_HEADER */
+export const FALLBACK_REASON_MESSAGES: Record<FallbackReason, string> = {
+  'no-placeholder-support':
+    'this terminal does not support kitty graphics with Unicode placeholders',
+  'multiplexed-session':
+    'tmux or GNU screen is intercepting the kitty graphics escape sequences',
+};

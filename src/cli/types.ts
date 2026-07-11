@@ -26,3 +26,6 @@ export interface UsageErrorAction {
 
 /** Discriminated union of everything a CLI invocation can ask for */
 export type ParsedCliArgs = PlayAction | HelpAction | VersionAction | UsageErrorAction;
+
+/** Why the kitty-graphics player cannot run in this terminal */
+export type FallbackReason = 'no-placeholder-support' | 'multiplexed-session';

@@ -18,6 +18,7 @@ import { EXIT_OK, EXIT_USAGE, HELP_TEXT, UNSUPPORTED_TERMINAL_MESSAGE, VERSION }
 import { parseCliArgs } from './parseCliArgs.ts';
 
 export { parseCliArgs } from './parseCliArgs.ts';
+export { detectFallbackReasons } from './detectFallbackReasons.ts';
 export * from './consts.ts';
 export * from './types.ts';
 
