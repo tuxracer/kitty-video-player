@@ -1,6 +1,73 @@
-import { describe, expect, it } from 'vitest';
+import { execFile } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 
-import { FfmpegSourceError, isFfmpegSourceError, computeDecodeSize } from './index.ts';
+import ffmpegPath from 'ffmpeg-static';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import {
+  FfmpegSourceError,
+  computeDecodeSize,
+  isFfmpegSourceError,
+  probeFile,
+} from './index.ts';
+import type { FfmpegSourceErrorCode } from './index.ts';
+
+const execFileAsync = promisify(execFile);
+
+// Real fixture videos generated once per run with the bundled ffmpeg, so the
+// suite exercises the actual probe/decode pipeline with no mocks.
+let fixtureDir: string;
+let smallVideo: string;
+let largeVideo: string;
+let audioOnly: string;
+let notVideo: string;
+
+const FIXTURE_TIMEOUT_MS = 60_000;
+
+beforeAll(async () => {
+  if (ffmpegPath === null) {
+    throw new Error('ffmpeg-static provides no binary for this platform');
+  }
+  fixtureDir = await mkdtemp(join(tmpdir(), 'kitty-player-ffmpeg-'));
+  smallVideo = join(fixtureDir, 'small.mp4');
+  largeVideo = join(fixtureDir, 'large.mp4');
+  audioOnly = join(fixtureDir, 'audio-only.m4a');
+  notVideo = join(fixtureDir, 'not-a-video.txt');
+  const encode = ['-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p'];
+  await execFileAsync(ffmpegPath, [
+    '-f', 'lavfi', '-i', 'testsrc=duration=2:size=64x36:rate=10', ...encode, smallVideo,
+  ]);
+  await execFileAsync(ffmpegPath, [
+    '-f', 'lavfi', '-i', 'testsrc=duration=1:size=1920x1080:rate=10', ...encode, largeVideo,
+  ]);
+  await execFileAsync(ffmpegPath, [
+    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:a', 'aac', audioOnly,
+  ]);
+  await writeFile(notVideo, 'this is not a media file\n');
+}, FIXTURE_TIMEOUT_MS);
+
+afterAll(async () => {
+  await rm(fixtureDir, { recursive: true, force: true });
+});
+
+const expectCode = async (
+  promise: Promise<unknown>,
+  code: FfmpegSourceErrorCode,
+): Promise<void> => {
+  try {
+    await promise;
+  } catch (error) {
+    expect(isFfmpegSourceError(error)).toBe(true);
+    if (isFfmpegSourceError(error)) {
+      expect(error.code).toBe(code);
+    }
+    return;
+  }
+  throw new Error(`expected a rejection with code ${code}`);
+};
 
 describe('FfmpegSourceError', () => {
   it('is identified by the isFfmpegSourceError guard', () => {
@@ -39,5 +106,28 @@ describe('computeDecodeSize', () => {
   it('rounds fitted dimensions to even numbers', () => {
     // scale = 960/963, height 541 * scale = 539.3, rounded to even
     expect(computeDecodeSize(963, 541)).toEqual({ width: 960, height: 540 });
+  });
+});
+
+describe('probeFile', () => {
+  it('reads dimensions, duration, and fps from a real video', async () => {
+    const probe = await probeFile(smallVideo);
+    expect(probe.nativeWidth).toBe(64);
+    expect(probe.nativeHeight).toBe(36);
+    expect(probe.fps).toBe(10);
+    expect(probe.durationMs).toBeGreaterThanOrEqual(1_900);
+    expect(probe.durationMs).toBeLessThanOrEqual(2_100);
+  });
+
+  it('rejects a missing path with FILE_NOT_FOUND', async () => {
+    await expectCode(probeFile(join(fixtureDir, 'missing.mp4')), 'FILE_NOT_FOUND');
+  });
+
+  it('rejects a non-media file with PROBE_FAILED', async () => {
+    await expectCode(probeFile(notVideo), 'PROBE_FAILED');
+  });
+
+  it('rejects an audio-only file with NO_VIDEO_STREAM', async () => {
+    await expectCode(probeFile(audioOnly), 'NO_VIDEO_STREAM');
   });
 });
