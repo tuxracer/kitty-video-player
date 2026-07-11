@@ -8,7 +8,7 @@ export const VERSION = '0.1.0';
 /** Exit code for success paths (help, version, graceful unsupported-terminal exit) */
 export const EXIT_OK = 0;
 
-/** Exit code for usage errors (unknown flags, unsupported file arguments) */
+/** Exit code for usage errors and unplayable files */
 export const EXIT_USAGE = 1;
 
 /** Usage and controls text printed by --help (and to stderr after a usage error) */
@@ -16,7 +16,7 @@ export const HELP_TEXT = `kitty-player, a terminal video player (Ink UI with a k
 
 Usage:
   kitty-player            play the built-in procedural demo
-  kitty-player <file>     video file decoding is not yet supported
+  kitty-player <file>     play a video file (decoded with the bundled ffmpeg)
 
 Options:
   -h, --help              print this help and exit
@@ -35,8 +35,3 @@ notice and exits without drawing.`;
 export const UNSUPPORTED_TERMINAL_MESSAGE =
   'kitty-player needs an interactive Kitty or Ghostty terminal (Kitty graphics ' +
   'protocol with Unicode placeholder support). Nothing was drawn.';
-
-/** Printed to stderr, prefixed with the file name, when a file argument is passed */
-export const FILE_DECODE_UNSUPPORTED_MESSAGE =
-  'video file decoding is not yet supported. Run kitty-player with no ' +
-  'arguments to play the built-in procedural demo.';

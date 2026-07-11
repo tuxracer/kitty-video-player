@@ -8,6 +8,9 @@ import type { ParsedCliArgs } from './types.ts';
  * import the parser from here without executing the entry (index.tsx
  * re-exports it for completeness).
  *
+ * One positional argument selects the video file to play; more than one is a
+ * usage error naming the extras.
+ *
  * Unknown or malformed flags make parseArgs throw. The error is caught and
  * surfaced as a usage-error action carrying the message, so the caller can
  * print it alongside the usage text and exit nonzero instead of crashing
@@ -29,8 +32,14 @@ export const parseCliArgs = (argv: string[]): ParsedCliArgs => {
     if (values.version) {
       return { action: 'version' };
     }
-    if (positionals.length > 0) {
-      return { action: 'unsupported-file', file: positionals[0] };
+    if (positionals.length > 1) {
+      return {
+        action: 'usage-error',
+        message: `unexpected extra arguments: ${positionals.slice(1).join(' ')}`,
+      };
+    }
+    if (positionals.length === 1) {
+      return { action: 'play', file: positionals[0] };
     }
     return { action: 'play' };
   } catch (error) {

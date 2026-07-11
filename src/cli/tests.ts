@@ -25,18 +25,16 @@ describe('parseCliArgs', () => {
     expect(parseCliArgs(['-v'])).toEqual({ action: 'version' });
   });
 
-  it('returns unsupported-file naming the file for a positional argument', () => {
-    expect(parseCliArgs(['movie.mp4'])).toEqual({
-      action: 'unsupported-file',
-      file: 'movie.mp4',
-    });
+  it('returns play with the file for a positional argument', () => {
+    expect(parseCliArgs(['movie.mp4'])).toEqual({ action: 'play', file: 'movie.mp4' });
   });
 
-  it('reports only the first of several positional arguments', () => {
-    expect(parseCliArgs(['a.mp4', 'b.mp4'])).toEqual({
-      action: 'unsupported-file',
-      file: 'a.mp4',
-    });
+  it('returns usage-error for more than one positional argument', () => {
+    const result = parseCliArgs(['a.mp4', 'b.mp4']);
+    expect(result.action).toBe('usage-error');
+    if (result.action === 'usage-error') {
+      expect(result.message).toContain('b.mp4');
+    }
   });
 
   it('prefers help over a positional file', () => {
