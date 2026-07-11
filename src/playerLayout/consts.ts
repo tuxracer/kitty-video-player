@@ -9,8 +9,9 @@ export const PANEL_HORIZONTAL_MARGIN = 4;
 
 /**
  * Rows of UI chrome around the panel: the title row, the controls row, the
- * help row, and the blank spacer rows the Player draws between them. Counted
- * from the Player's actual layout, currently five rows total.
+ * help row, and the blank spacer rows the Video component draws between
+ * them. Counted from the component's actual layout, currently five rows
+ * total.
  */
 export const CHROME_ROWS = 5;
 

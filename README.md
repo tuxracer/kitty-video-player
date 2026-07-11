@@ -69,10 +69,10 @@ No setup call is needed. The component never reads stdin, so it cannot fight
 Ink for input.
 
 ```tsx
-import { render, Text, useInput } from "ink";
-import { useRef } from "react";
-import { Video } from "kitty-player";
-import type { VideoRef } from "kitty-player";
+import { render, Text, useInput } from 'ink';
+import { useRef } from 'react';
+import { Video } from 'kitty-player';
+import type { VideoRef } from 'kitty-player';
 
 const App = () => {
   const video = useRef<VideoRef>(null);
@@ -110,12 +110,12 @@ way the CLI does.
 
 ## Library use
 
-The package also exports the pieces for embedding a player panel in your own Ink app: `Player`, the `FrameSource`/`FrameSourceInfo` contract, `createProceduralSource`, `createFfmpegSource`, `computePanelRegion`, and `formatTime`.
+The package also exports the pieces for embedding a video panel in your own Ink app: `Video` (the primary export, with `Player` kept as a backwards-compatible alias), the `FrameSource`/`FrameSourceInfo` contract, `createProceduralSource`, `createFfmpegSource`, `computePanelRegion`, and `formatTime`.
 
 ```tsx
 import { render } from 'ink';
 import { createScreen } from 'kitty-motion';
-import { computePanelRegion, createProceduralSource, Player } from 'kitty-player';
+import { computePanelRegion, createProceduralSource, Video } from 'kitty-player';
 
 const source = createProceduralSource();
 const info = await source.open();
@@ -141,7 +141,10 @@ const screen = await createScreen({
   autoDispose: false,
 });
 
-render(<Player screen={screen} source={source} info={info} />, { exitOnCtrlC: false });
+render(
+  <Video screen={screen} source={source} info={info} autoPlay loop controls keyboard title help />,
+  { exitOnCtrlC: false },
+);
 ```
 
 `FrameSource` is the seam a real decoder implements. `open()` returns the stream info (pixel dimensions, color space, duration, frame rate). `getFrameAt(timeMs)` resolves the frame at or nearest after that timestamp, or `null` to keep the last frame on screen, and the returned buffer is only valid until the next call because sources may reuse it. `seek(timeMs)` repositions the source so nearby `getFrameAt` calls are cheap (a no-op for random-access sources). `close()` releases decoder resources and is idempotent. `createFfmpegSource` implements those four methods over a bundled ffmpeg pipe, and is the FrameSource behind file playback.

@@ -42,7 +42,7 @@ export const computePanelRegion = ({
  * Offsets stay at 1,1 because the host Ink app owns actual placement.
  *
  * Unlike computePanelRegion, this function does not delegate to
- * fitToTerminal. The reason: fitToTerminal enforces a minimum display size
+ * fitToTerminal, because fitToTerminal enforces a minimum display size
  * floor (roughly 32 cols x 15 rows) that distorts aspect ratio inside boxes
  * smaller than the floor. An embedded box must respect its exact requested
  * dimensions, so this function hand-rolls the fit logic to preserve aspect

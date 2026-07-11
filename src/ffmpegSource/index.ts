@@ -22,10 +22,10 @@ export * from './types.ts';
  * Creates a FrameSource decoding a video file with the bundled ffmpeg.
  * One long-lived ffmpeg process streams rawvideo rgb24 frames (scaled to fit
  * the MAX_DECODE_* caps) into a readahead queue. Seeks and backward time
- * jumps (the Player's loop-around at end of file) respawn the process with
+ * jumps (the player's loop-around at end of file) respawn the process with
  * input-side -ss. open() rejects with FfmpegSourceError; a mid-playback
  * decoder death is noted once on stderr and getFrameAt resolves null from
- * then on (the Player keeps showing the last frame).
+ * then on (the player keeps showing the last frame).
  */
 export const createFfmpegSource = (options: FfmpegSourceOptions): FrameSource => {
   const { filePath } = options;
@@ -149,7 +149,7 @@ export const createFfmpegSource = (options: FfmpegSourceOptions): FrameSource =>
     }
     const toleranceMs = MS_PER_SECOND / info.fps / 2;
 
-    // A jump to before anything still available (the Player's loop-around at
+    // A jump to before anything still available (the player's loop-around at
     // end of file, or any rewind) restarts the decode at the requested time.
     // This same path doubles as recovery after a mid-playback decoder death:
     // the next loop-around respawns the decoder on the file.

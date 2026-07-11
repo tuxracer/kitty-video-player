@@ -2,7 +2,7 @@
 /**
  * Executable CLI entry (built as dist/cli.js, the package bin). Parses argv,
  * guards on terminal capability, then hands either a procedural or an
- * ffmpeg-decoded FrameSource and a kitty-motion Screen to the Ink Player.
+ * ffmpeg-decoded FrameSource and a kitty-motion Screen to the Ink Video component.
  * Importing this module runs the CLI, so tests import parseCliArgs from
  * ./parseCliArgs.ts directly.
  */
@@ -80,7 +80,7 @@ const screen = await createScreen({
   autoDispose: false,
 });
 
-// exitOnCtrlC: false so the Player's own input handler can dispose the Screen
+// exitOnCtrlC: false so Video's own input handler can dispose the Screen
 // and close the source before Ink tears the render down.
 render(
   <Video screen={screen} source={source} info={info} autoPlay loop controls keyboard title help />,
