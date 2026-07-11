@@ -7,3 +7,5 @@ dist/
 docs/superpowers/
 .worktrees/
 .claude/
+*.webm
+*.mp4
