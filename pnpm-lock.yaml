@@ -21,8 +21,8 @@ importers:
         specifier: ^5.2.1
         version: 5.2.1(@types/react@18.3.31)(react@18.3.1)
       kitty-motion:
-        specifier: ^1.2.0
-        version: 1.2.0
+        specifier: ^1.4.0
+        version: 1.4.0
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -1344,8 +1344,8 @@ packages:
   keyv@4.5.4:
     resolution: {integrity: sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw==}
 
-  kitty-motion@1.2.0:
-    resolution: {integrity: sha512-HvKjmCAYZuWnsRVPfn+MV3aDvwUYmWgod+8SNUX+rt8r57+naD+CW7VTtHn+i1vgVMA5cjsK7EJsd/YUYzwG4g==}
+  kitty-motion@1.4.0:
+    resolution: {integrity: sha512-iNS3u/Uu0U7f2rVDnEvn43PHzmshwwj/4eY20ACor3UkCG9uR3wD3cam8mvIqq9LQdeKwn9afr9ro0m56gPgWQ==}
     engines: {node: '>=24.0.0'}
 
   levn@0.4.1:
@@ -2898,7 +2898,7 @@ snapshots:
     dependencies:
       json-buffer: 3.0.1
 
-  kitty-motion@1.2.0: {}
+  kitty-motion@1.4.0: {}
 
   levn@0.4.1:
     dependencies:
