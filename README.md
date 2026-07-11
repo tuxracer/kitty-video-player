@@ -46,10 +46,11 @@ a hue-cycling ball moving on a Lissajous path over a 20 second loop.
 
 ## CLI flags
 
-| Flag              | Action                     |
-| ----------------- | -------------------------- |
-| `-h`, `--help`    | print help and exit        |
-| `-v`, `--version` | print the version and exit |
+| Flag              | Action                                                                |
+| ----------------- | --------------------------------------------------------------------- |
+| `<file>`          | play this video file (optional, plays the built-in demo when omitted) |
+| `-h`, `--help`    | print help and exit                                                   |
+| `-v`, `--version` | print the version and exit                                            |
 
 ## How it works
 

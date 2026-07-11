@@ -112,8 +112,8 @@ export const createFfmpegSource = (options: FfmpegSourceOptions): FrameSource =>
     };
 
     child.on('error', noteFailure);
-    child.on('close', (code) => {
-      if (code !== 0 && code !== null) {
+    child.on('close', (code, signal) => {
+      if (code !== 0 || signal !== null) {
         noteFailure();
       }
     });
@@ -151,6 +151,8 @@ export const createFfmpegSource = (options: FfmpegSourceOptions): FrameSource =>
 
     // A jump to before anything still available (the Player's loop-around at
     // end of file, or any rewind) restarts the decode at the requested time.
+    // This same path doubles as recovery after a mid-playback decoder death:
+    // the next loop-around respawns the decoder on the file.
     const earliestMs = decoder.frames[0]?.timestampMs ?? decoder.nextTimestampMs;
     if (timeMs < earliestMs - toleranceMs) {
       killDecoder();

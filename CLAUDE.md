@@ -36,7 +36,7 @@ Data flow: `cli` parses argv (`parseCliArgs`, a pure function in its own file so
 - **AGENTS.md is a symlink to CLAUDE.md**: edit CLAUDE.md only, never create a separate AGENTS.md
 - **ink is pinned to 5.x with react 18**: `@inkjs/ui` 2.x targets ink 5, and Ink's width measurement of the placeholder cells is version-sensitive. ink 7 requires react 19 and is a deliberate future upgrade, not a casual dependency bump
 - **`VERSION` in `src/cli/consts.ts` mirrors package.json**: it is a literal (importing package.json from outside `src/` breaks the tsconfig include), so bump it together with the `version` field on every release
-- **ffmpeg-static needs its install script**: `pnpm-workspace.yaml` allowlists `ffmpeg-static` under `allowBuilds` because it downloads its binary in a postinstall step. If the CLI dies with ENOENT spawning ffmpeg, the script was blocked, run `pnpm install --force` after checking the allowlist
+- **ffmpeg-static needs its install script**: `pnpm-workspace.yaml` allowlists `ffmpeg-static` under `allowBuilds` because it downloads its binary in a postinstall step. If the CLI dies with ENOENT spawning ffmpeg, the script was blocked. Run `pnpm install --force` after checking the allowlist
 
 ## Git
 
