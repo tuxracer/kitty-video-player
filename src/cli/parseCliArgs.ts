@@ -1,0 +1,40 @@
+import { parseArgs } from 'node:util';
+
+import type { ParsedCliArgs } from './types.ts';
+
+/**
+ * Pure argv parser for the CLI. It lives in its own file rather than in
+ * index.tsx because the entry runs the player at module top level, so tests
+ * import the parser from here without executing the entry (index.tsx
+ * re-exports it for completeness).
+ *
+ * Unknown or malformed flags make parseArgs throw. The error is caught and
+ * surfaced as a usage-error action carrying the message, so the caller can
+ * print it alongside the usage text and exit nonzero instead of crashing
+ * with a stack trace.
+ */
+export const parseCliArgs = (argv: string[]): ParsedCliArgs => {
+  try {
+    const { values, positionals } = parseArgs({
+      args: argv,
+      allowPositionals: true,
+      options: {
+        help: { type: 'boolean', short: 'h' },
+        version: { type: 'boolean', short: 'v' },
+      },
+    });
+    if (values.help) {
+      return { action: 'help' };
+    }
+    if (values.version) {
+      return { action: 'version' };
+    }
+    if (positionals.length > 0) {
+      return { action: 'unsupported-file', file: positionals[0] };
+    }
+    return { action: 'play' };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { action: 'usage-error', message };
+  }
+};
