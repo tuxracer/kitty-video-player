@@ -6,3 +6,4 @@ dist/
 .superpowers/
 docs/superpowers/
 .worktrees/
+.claude/
