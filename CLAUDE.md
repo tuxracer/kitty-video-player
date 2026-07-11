@@ -1,3 +1,309 @@
 # kitty-player
 
-Project documentation lands in a later task. This file is a placeholder from the bootstrap task.
+## Commands
+
+- `pnpm check` - typecheck + lint + run all tests (run before committing)
+- `pnpm test` - vitest in watch mode (`pnpm test:run` for a single pass)
+- `pnpm lint` / `pnpm lint:fix` - ESLint over `src/`
+- `pnpm typecheck` - `tsc --noEmit`
+- `pnpm build` - typecheck then tsup. The build has two entries: `cli` (the executable bin, `dist/cli.js`, which runs the player at module top level) and `index` (the library entry, `dist/index.js`, for hosts embedding the Player in their own Ink app). They must stay separate bundles because importing the cli entry starts playback
+- `pnpm dev` - run the CLI from source via tsx. `pnpm dev --help` forwards flags as expected, but `pnpm dev -- --help` does not (pnpm 11 passes the literal `--` through as a positional, which the CLI rejects as an unsupported file argument)
+
+## Architecture
+
+Data flow: `cli` parses argv (`parseCliArgs`, a pure function in its own file so tests can import it without executing the entry) and guards on terminal capability. If stdout is not a TTY or `detectKittyUnicodePlaceholderSupport()` says no, it prints a notice and exits 0 (CI-friendly). Otherwise it opens the `FrameSource` (the built-in `proceduralSource` in v1), computes the panel `region` with `computePanelRegion`, and awaits kitty-motion's `createScreen` BEFORE calling Ink's `render()`. That ordering is load-bearing because the capability probes read responses from stdin, and Ink's `useInput` takes stdin over once rendering starts. Then it renders `<Player screen source info />` with `exitOnCtrlC: false` so the Player's own input handler can dispose the Screen and close the source before Ink tears down.
+
+`Player` owns the playback clock. A `setInterval` at the source frame rate lives outside React state, refs mirror `playing` and elapsed time as the source of truth for the interval callback, and an in-flight guard keeps async `getFrameAt` calls from piling up behind a slow source. Frames go straight to `screen.pushFrame()`, bypassing React entirely, and React state (so an Ink redraw) updates only when the displayed whole second changes. On terminal resize the Player debounces the stdout `resize` event, calls `screen.setRegion()` with a freshly computed panel region, RE-READS `screen.getPlaceholderRows()` (the grid size can change, so the old rows are stale), and repaints the current frame.
+
+`FrameSource` is the seam where a future ffmpeg decoder plugs in. It is a pull model: the player's clock requests frames by timestamp via `getFrameAt(timeMs)`, `null` means no frame is ready and the player keeps showing the last one, and returned buffers may be reused by the source (valid only until the next call). `seek(timeMs)` makes nearby reads cheap, `close()` is idempotent.
+
+### Module map
+
+- `src/cli/` - executable bin entry (`index.tsx` runs the player on import) plus `parseCliArgs.ts`, the exit codes, help text, and `VERSION`
+- `src/Player/` - the Ink component: playback clock, keyboard input, progress bar chrome, resize handling
+- `src/frameSource/` - interface-only module holding the `FrameSource`/`FrameSourceInfo` contract (no implementation, no consts)
+- `src/proceduralSource/` - the built-in demo source, a hue-cycling ball on a Lissajous path rendered as a pure function of time into a reused framebuffer
+- `src/playerLayout/` - `computePanelRegion`, sizes the video panel's cell grid from the terminal size via kitty-motion's `fitToTerminal`
+- `src/formatTime/` - millisecond timestamps as `m:ss`, switching to `h:mm:ss` at one hour
+- `src/index.ts` - library entry with explicit (not star) re-exports, because several modules define their own `MS_PER_SECOND` and star exports would silently drop the ambiguous name
+
+## Gotchas
+
+- **`createScreen` before Ink `render()`**: the kitty-motion capability probes read stdin, and Ink's `useInput` takes stdin after `render()`. Creating the Screen after rendering hangs or corrupts the probe handshake. The cli entry already does this in the right order, keep it that way
+- **Re-read placeholder rows after `setRegion()`**: the placeholder grid size can change with the region, so cached rows go stale. The Player's resize effect calls `screen.getPlaceholderRows()` again after every `setRegion()`
+- **`minimumReleaseAge` install policy**: `pnpm-workspace.yaml` blocks package versions published less than 7 days ago, with `kitty-motion` excluded (our own package, every published version is newer than the cutoff). If `pnpm add` or `pnpm update` fails to resolve a brand-new release, pin an older version instead of fighting the resolver
+- **AGENTS.md is a symlink to CLAUDE.md**: edit CLAUDE.md only, never create a separate AGENTS.md
+- **ink is pinned to 5.x with react 18**: `@inkjs/ui` 2.x targets ink 5, and Ink's width measurement of the placeholder cells is version-sensitive. ink 7 requires react 19 and is a deliberate future upgrade, not a casual dependency bump
+- **`VERSION` in `src/cli/consts.ts` mirrors package.json**: it is a literal (importing package.json from outside `src/` breaks the tsconfig include), so bump it together with the `version` field on every release
+
+## Git
+
+- **Never create merge commits**: When integrating a branch, always rebase. Use `git rebase`, `git pull --rebase`, or `git merge --ff-only` to keep history linear. Never run a plain `git merge` that produces a merge commit.
+
+## Coding Standards
+
+- **Package manager**: Use `pnpm` for all package management (install, add, remove, etc.)
+- **ESM imports only**: Always use `import` syntax, never `require()`. This is an ESM project and `require` will throw `ReferenceError: require is not defined`
+- **Explicit `.ts`/`.tsx` extensions on relative imports**: Write `from "./consts.ts"` and `from "../Player/index.tsx"`, never extensionless `from "./consts"`. Enforced by ESLint
+- **Erasable syntax only**: `erasableSyntaxOnly` is on in tsconfig. No constructor parameter properties (`constructor(private foo: T)`), enums, or namespaces. Declare fields explicitly and assign in the constructor
+- **Arrow functions**: Use `const foo = () => { ... }` (enforced by ESLint, auto-fixable with `pnpm lint:fix`)
+- **Reserve `use` prefix for React hooks**: This project has real React hooks (Ink components), so the `useFoo` naming convention is reserved for them. For boolean options or flags, use names like `systemFont`, `enableCache`, or `withValidation` instead of `useSystemFont`, `useCache`, or `useValidation`
+- **Named constants**: Use `const HEADER_SIZE = 16` not magic numbers
+- **Numeric separators**: Use underscore separators for numbers 1000 and above for readability (`1_500`, `44_100`, `100_000`)
+- **DRY (Don't Repeat Yourself)**: When a pattern appears 3+ times, extract it into a helper function. This improves readability and maintainability without impacting performance
+- **Module structure**: Always create modules as directories with `index.ts` (or `index.tsx` for components), never as single `moduleName.ts` files. Name the directory after the primary export (class, function, component, or concept). This provides a consistent location for related files:
+
+  ```
+  # GOOD - directory structure allows for growth
+  src/
+    Player/
+      index.tsx      # exports the Player component
+      tests.tsx      # tests for the module (.tsx when tests render JSX)
+      consts.ts      # SEEK_STEP_MS, HELP_TEXT, etc.
+      types.ts       # PlayerProps, PlayerScreen interfaces
+    formatTime/
+      index.ts       # exports formatTime()
+      tests.ts
+      consts.ts
+
+  # BAD - single files have nowhere for related code to go
+  src/
+    Player.tsx
+    formatTime.ts
+  ```
+
+  Standard files within a module directory:
+  - `index.ts` / `index.tsx` - Main module implementation and exports (no constants or type definitions here)
+  - `tests.ts` / `tests.tsx` - Tests for the module (`.tsx` when the tests render components)
+  - `consts.ts` - **All** module-specific constants (primitives, arrays, objects)
+  - `types.ts` - **All** type definitions, interfaces, and type guards
+
+- **Keep index.ts focused on implementation**: The `index.ts` file should only contain the main implementation (classes, functions, components). All constants go in `consts.ts` and all types/interfaces/type guards go in `types.ts`:
+
+  ```typescript
+  // BAD - constants defined in index.ts
+  // Player/index.tsx
+  const SEEK_STEP_MS = 5_000;
+  export const Player = () => { ... };
+
+  // GOOD - constants in consts.ts, imported into index.tsx
+  // Player/consts.ts
+  export const SEEK_STEP_MS = 5_000;
+
+  // Player/index.tsx
+  import { SEEK_STEP_MS } from "./consts.ts";
+  export const Player = () => { ... };
+  ```
+
+- **Re-export types and consts from index.ts**: Each module's `index.ts` should re-export all types and consts from `types.ts` and `consts.ts`. External code should import from the module, not directly from internal files:
+
+  ```typescript
+  // GOOD - import from the module's index
+  import { SEEK_STEP_MS, PlayerProps } from "../Player/index.tsx";
+
+  // BAD - importing directly from internal module files
+  import { SEEK_STEP_MS } from "../Player/consts.ts";
+  import type { PlayerProps } from "../Player/types.ts";
+  ```
+
+  One exception is deliberate here. `src/index.ts` uses explicit named re-exports instead of `export *`, because several modules define their own `MS_PER_SECOND` and star exports would silently drop the ambiguous name
+
+- **JSDoc**: Skip `@param`/`@returns` tags (TypeScript provides types), use inline comments if needed
+- **Doc comments on interface/type properties**: Use a `/** ... */` block comment above the property, not a trailing `//` comment. Editors surface `/** */` on hover, but trailing `//` comments are invisible until you scroll to that line:
+
+  ```typescript
+  // GOOD - shows on hover in editors
+  export interface ProceduralSourceOptions {
+    /** Source framebuffer width in pixels (default 240) */
+    width?: number;
+  }
+
+  // BAD - trailing comment doesn't show on hover
+  export interface ProceduralSourceOptions {
+    width?: number; // Source framebuffer width in pixels (default 240)
+  }
+  ```
+
+- **Export interfaces**: Almost always export `interface`/`type` declarations, even ones that look internal to a module. Consumers (and tests) frequently need to reference a function's options or return shape, and an unexported type forces them to redefine or `ReturnType<>`/`Parameters<>` it instead:
+
+  ```typescript
+  // BAD - unexported, so callers can't name this type
+  interface PanelRegionOptions {
+    termCols: number;
+    termRows: number;
+    sourceWidth: number;
+    sourceHeight: number;
+  }
+
+  // GOOD - exported so callers can use the type directly
+  export interface PanelRegionOptions {
+    termCols: number;
+    termRows: number;
+    sourceWidth: number;
+    sourceHeight: number;
+  }
+  ```
+
+- **Loading indicators**: Delay by ~1 second to avoid flash for fast operations
+- **Intl API**: Prefer `Intl.DateTimeFormat`, `Intl.NumberFormat`, etc. over manual formatting for dates, numbers, and currencies
+- **Explicit conditionals for derived values**: When a value is derived from another value, use the source value in conditionals, not the derived value. This makes the logic clearer and avoids confusion:
+
+  ```typescript
+  // GOOD - explicit about what each branch handles
+  if (this.limitColors === 16) {
+    /* ANSI 16 */
+  } else if (this.limitColors === 256) {
+    /* ANSI 256 */
+  } else {
+    /* True color (limitColors === 0) */
+  }
+
+  // BAD - confusing because useTrueColor is derived from limitColors
+  if (this.limitColors === 16) {
+    /* ANSI 16 */
+  } else if (this.useTrueColor) {
+    /* True color */
+  } else {
+    /* ANSI 256 */
+  }
+  ```
+
+- **Type guards over type assertions**: Never use `as` type assertions on values with unknown runtime types. Write small hand-rolled type guards instead:
+
+  ```typescript
+  // GOOD - type guard validates at runtime
+  const isString = (value: unknown): value is string => typeof value === "string";
+
+  if (isString(value)) {
+    config.name = value;
+  }
+
+  // BAD - blind cast assumes type without validation
+  config.name = value as string;
+  ```
+
+  For union types (e.g., `ColorSpace` from kitty-motion), create a type guard that validates the actual values, not just the primitive type:
+
+  ```typescript
+  // GOOD - validates the value is one of the allowed options
+  if (isColorSpace(value)) {
+    config.colorSpace = value; // No cast needed
+  }
+
+  // BAD - isString only checks primitive type, not valid union values
+  if (isString(value)) {
+    config.colorSpace = value as ColorSpace; // Still a blind cast!
+  }
+  ```
+
+  When creating type guards for union types, use the named type in the return type annotation - don't hardcode the union:
+
+  ```typescript
+  // GOOD - uses the named type
+  import type { ColorSpace } from "kitty-motion";
+
+  const COLOR_SPACES: readonly ColorSpace[] = ["rgb15", "rgb24"];
+
+  export const isColorSpace = (value: unknown): value is ColorSpace =>
+    isString(value) && COLOR_SPACES.includes(value as ColorSpace);
+
+  // BAD - hardcodes the union type (duplicates the type definition)
+  export const isColorSpace = (value: unknown): value is "rgb15" | "rgb24" => {
+    // ...
+  };
+  ```
+
+- **Typed errors over string messages**: When throwing errors, create a custom error class with a typed `code` property instead of using plain `Error` with string messages. This enables type-safe error handling:
+
+  ```typescript
+  // GOOD - typed error with machine-readable code
+  type MyErrorCode = "NOT_FOUND" | "PERMISSION_DENIED" | "TIMEOUT";
+
+  class MyError extends Error {
+    readonly code: MyErrorCode;
+    constructor(code: MyErrorCode) {
+      super(code);
+      this.name = "MyError";
+      this.code = code;
+    }
+  }
+
+  const isMyError = (error: unknown): error is MyError => {
+    return error instanceof MyError;
+  };
+
+  // Usage - callers get autocomplete and type checking
+  try {
+    await doSomething();
+  } catch (error) {
+    if (isMyError(error)) {
+      switch (error.code) {
+        case "NOT_FOUND": // TypeScript knows valid codes
+        // ...
+      }
+    }
+  }
+
+  // BAD - string messages aren't type-safe
+  throw new Error("Not found");
+  throw new Error("Permission denied");
+  ```
+
+- **Tests verify behavior, not implementation**: Tests should verify that code works correctly, not enshrine implementation details. Never write tests that just check constant values - if a constant matters, test the behavior it affects:
+
+  ```typescript
+  // BAD - tests implementation detail, provides no value
+  it("should have expected default value", () => {
+    expect(SEEK_STEP_MS).toBe(5_000);
+  });
+
+  // GOOD - tests actual behavior that depends on the constant
+  it("should seek 5 seconds forward on right arrow", () => {
+    stdin.write("[C");
+    expect(fakeSource.lastSeekMs).toBe(5_000);
+  });
+  ```
+
+## Documentation Style
+
+Applies to all prose: README, doc comments, JSDoc, commit messages, and PR descriptions.
+
+- **No emdashes**: Never use emdashes (—) or spaced hyphens as emdash substitutes. Restructure into separate sentences, or use a comma, colon, or parentheses instead:
+
+  ```
+  # BAD
+  The player is light — roughly one Ink redraw per second — so the UI never stutters.
+
+  # GOOD
+  The player is light (roughly one Ink redraw per second), so the UI never stutters.
+  ```
+
+- **No semicolons or mid-sentence colons**: Human-written docs rarely use them, AI-generated ones lean on them constantly. Split into separate sentences instead. A colon that introduces a list, example, or code block is fine:
+
+  ```
+  # BAD
+  Ink owns the layout; the pixels are kitty-motion's problem: encoding, diffing, and backpressure.
+
+  # GOOD
+  Ink owns the layout. The pixels are kitty-motion's problem, covering
+  encoding, diffing, and backpressure.
+  ```
+
+- **No AI-isms**: Avoid filler words and hype phrasing that reads as machine-generated. Say what the thing does in plain, direct language:
+  - Banned words: "delve", "leverage" (as a verb; use "use"), "seamless", "seamlessly", "robust", "powerful", "cutting-edge", "blazingly fast", "supercharge", "elevate", "streamline", "harness" (as a verb), "unlock", "empower", "crucial", "comprehensive", "furthermore", "moreover", "additionally" (as a sentence opener)
+  - Banned constructions: "It's not just X, it's Y", "Whether you're X or Y", "In today's world of...", "Let's dive in", "the beauty of X is", rhetorical questions as section openers
+  - No summary padding: skip closing paragraphs like "In conclusion" or "With these tools in place, you're ready to..."
+
+  ```
+  # BAD
+  kitty-player provides a robust, seamless playback experience that empowers
+  you to effortlessly watch video in the terminal. Whether you're demoing or
+  debugging, it's not just smooth, it's blazingly fast.
+
+  # GOOD
+  kitty-player plays video in the terminal through an Ink UI. Frames bypass
+  React entirely, so Ink redraws about once per second while pixels update
+  at 30fps.
+  ```
+
+- **Concrete over promotional**: Prefer measurable claims ("Ink redraws once per second") over adjectives ("high-performance"). If a claim has no number or specific behavior behind it, cut it.
