@@ -4,7 +4,13 @@ import { promisify } from 'node:util';
 
 import ffprobeStatic from 'ffprobe-static';
 
-import { MAX_DECODE_HEIGHT, MAX_DECODE_WIDTH, MS_PER_SECOND } from './consts.ts';
+import {
+  HALF_ROTATION_DEGREES,
+  MAX_DECODE_HEIGHT,
+  MAX_DECODE_WIDTH,
+  MS_PER_SECOND,
+  QUARTER_ROTATION_DEGREES,
+} from './consts.ts';
 import { FfmpegSourceError } from './errors.ts';
 import type { DecodeSize, ProbeResult } from './types.ts';
 
@@ -48,6 +54,26 @@ const parseFrameRate = (value: unknown): number | null => {
     return null;
   }
   return num / den;
+};
+
+/**
+ * Display rotation in degrees from the stream's display matrix side data,
+ * 0 when absent. ffmpeg autorotates decoded frames, so a quarter-turned
+ * stream emits swapped dimensions.
+ */
+const readRotation = (stream: Record<string, unknown>): number => {
+  if (!Array.isArray(stream.side_data_list)) {
+    return 0;
+  }
+  for (const entry of stream.side_data_list) {
+    if (isRecord(entry)) {
+      const rotation = asFiniteNumber(entry.rotation);
+      if (rotation !== null) {
+        return rotation;
+      }
+    }
+  }
+  return 0;
 };
 
 /**
@@ -116,9 +142,11 @@ export const probeFile = async (filePath: string): Promise<ProbeResult> => {
     );
   }
 
+  const quarterTurned =
+    Math.abs(readRotation(video)) % HALF_ROTATION_DEGREES === QUARTER_ROTATION_DEGREES;
   return {
-    nativeWidth,
-    nativeHeight,
+    nativeWidth: quarterTurned ? nativeHeight : nativeWidth,
+    nativeHeight: quarterTurned ? nativeWidth : nativeHeight,
     durationMs: Math.round(durationSeconds * MS_PER_SECOND),
     fps,
   };

@@ -17,3 +17,9 @@ export const READAHEAD_FRAME_CAP = 60;
 
 /** Rolling tail of ffmpeg stderr kept for error reporting */
 export const STDERR_TAIL_MAX_CHARS = 2_048;
+
+/** A half rotation in degrees, for reducing display-matrix rotation to its quarter-turn remainder */
+export const HALF_ROTATION_DEGREES = 180;
+
+/** A quarter rotation in degrees, the remainder that means width and height swap */
+export const QUARTER_ROTATION_DEGREES = 90;

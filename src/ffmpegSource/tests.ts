@@ -29,6 +29,7 @@ let smallVideo: string;
 let largeVideo: string;
 let audioOnly: string;
 let notVideo: string;
+let rotatedVideo: string;
 
 const FIXTURE_TIMEOUT_MS = 60_000;
 
@@ -41,6 +42,7 @@ beforeAll(async () => {
   largeVideo = join(fixtureDir, 'large.mp4');
   audioOnly = join(fixtureDir, 'audio-only.m4a');
   notVideo = join(fixtureDir, 'not-a-video.txt');
+  rotatedVideo = join(fixtureDir, 'rotated.mp4');
   const encode = ['-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p'];
   await execFileAsync(ffmpegPath, [
     '-f', 'lavfi', '-i', 'testsrc=duration=2:size=64x36:rate=10', ...encode, smallVideo,
@@ -52,6 +54,14 @@ beforeAll(async () => {
     '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:a', 'aac', audioOnly,
   ]);
   await writeFile(notVideo, 'this is not a media file\n');
+
+  const rotatedSource = join(fixtureDir, 'rotated-source.mp4');
+  await execFileAsync(ffmpegPath, [
+    '-f', 'lavfi', '-i', 'testsrc=duration=1:size=64x36:rate=10', ...encode, rotatedSource,
+  ]);
+  await execFileAsync(ffmpegPath, [
+    '-display_rotation', '90', '-i', rotatedSource, '-c', 'copy', rotatedVideo,
+  ]);
 }, FIXTURE_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -134,6 +144,12 @@ describe('probeFile', () => {
 
   it('rejects an audio-only file with NO_VIDEO_STREAM', async () => {
     await expectCode(probeFile(audioOnly), 'NO_VIDEO_STREAM');
+  });
+
+  it('swaps dimensions for quarter-turned rotation metadata', async () => {
+    const probe = await probeFile(rotatedVideo);
+    expect(probe.nativeWidth).toBe(36);
+    expect(probe.nativeHeight).toBe(64);
   });
 });
 
@@ -230,5 +246,15 @@ describe('createFfmpegSource', () => {
     await expect(source.getFrameAt(0)).resolves.toBeNull();
     await expect(source.close()).resolves.toBeUndefined();
     await expect(source.getFrameAt(100)).resolves.toBeNull();
+  });
+
+  it('decodes rotated video at display orientation', async () => {
+    const source = createFfmpegSource({ filePath: rotatedVideo });
+    const info = await source.open();
+    expect(info.width).toBe(36);
+    expect(info.height).toBe(64);
+    const frame = await waitForFrame(source, 0);
+    expect(frame.length).toBe(36 * 64 * RGB_CHANNELS);
+    await source.close();
   });
 });
