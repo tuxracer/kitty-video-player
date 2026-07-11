@@ -1,7 +1,7 @@
 import { ProgressBar } from '@inkjs/ui';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import type { ReactElement } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
 import { formatTime } from '../formatTime/index.ts';
 import { computePanelRegion } from '../playerLayout/index.ts';
@@ -16,7 +16,7 @@ import {
   RESIZE_DEBOUNCE_MS,
   SEEK_STEP_MS,
 } from './consts.ts';
-import type { PlayerProps } from './types.ts';
+import type { PlayerProps, VideoRef } from './types.ts';
 import { usePlaybackClock } from './usePlaybackClock.ts';
 
 export * from './consts.ts';
@@ -29,23 +29,27 @@ export { usePlaybackClock } from './usePlaybackClock.ts';
  * mirrors what the chrome displays, so Ink redraws about once per second
  * while frames update at the source frame rate.
  */
-export const Video = ({
-  screen,
-  source,
-  info,
-  autoPlay = false,
-  loop = false,
-  controls = false,
-  keyboard = false,
-  title = false,
-  help = false,
-  onTimeUpdate,
-  onLoadedMetadata,
-  onPlay,
-  onPause,
-  onEnded,
-  onError,
-}: PlayerProps): ReactElement => {
+export const Video = forwardRef<VideoRef, PlayerProps>(
+  (
+    {
+      screen,
+      source,
+      info,
+      autoPlay = false,
+      loop = false,
+      controls = false,
+      keyboard = false,
+      title = false,
+      help = false,
+      onTimeUpdate,
+      onLoadedMetadata,
+      onPlay,
+      onPause,
+      onEnded,
+      onError,
+    },
+    ref,
+  ): ReactElement => {
   const { exit } = useApp();
   const { stdout } = useStdout();
 
@@ -67,6 +71,41 @@ export const Video = ({
     onError,
   });
   const { getElapsedMs, noteSourceError, repaint, seekToMs, togglePlay } = clock;
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      play: (): Promise<void> => {
+        clock.play();
+        return Promise.resolve();
+      },
+      pause: (): void => {
+        clock.pause();
+      },
+      get currentTime(): number {
+        return clock.getElapsedMs() / MS_PER_SECOND;
+      },
+      set currentTime(seconds: number) {
+        clock.seekToMs(seconds * MS_PER_SECOND);
+      },
+      get paused(): boolean {
+        return !clock.playing;
+      },
+      get ended(): boolean {
+        return clock.ended;
+      },
+      get duration(): number {
+        return info.durationMs / MS_PER_SECOND;
+      },
+      get videoWidth(): number {
+        return info.width;
+      },
+      get videoHeight(): number {
+        return info.height;
+      },
+    }),
+    [clock, info],
+  );
 
   // HTML5 fires loadedmetadata once dimensions and duration are known. In
   // external mode they are known at mount.
@@ -168,7 +207,10 @@ export const Video = ({
       {help ? <Text dimColor>{HELP_TEXT}</Text> : null}
     </Box>
   );
-};
+  },
+);
+
+Video.displayName = 'Video';
 
 /** Backwards-compatible alias, the component was originally exported as Player */
 export const Player = Video;

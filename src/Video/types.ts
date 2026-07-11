@@ -67,6 +67,21 @@ export interface PlaybackClock {
   noteSourceError(error: unknown): void;
 }
 
+export interface VideoRef {
+  play(): Promise<void>;
+  pause(): void;
+  /** Playhead in seconds, get/set (setting seeks) */
+  currentTime: number;
+  readonly paused: boolean;
+  readonly ended: boolean;
+  /** Duration in seconds, NaN before metadata loads */
+  readonly duration: number;
+  /** Source width in pixels, 0 before metadata loads */
+  readonly videoWidth: number;
+  /** Source height in pixels, 0 before metadata loads */
+  readonly videoHeight: number;
+}
+
 export interface PlayerProps extends PlaybackCallbacks {
   screen: PlayerScreen;
   source: FrameSource;

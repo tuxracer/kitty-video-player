@@ -1,10 +1,11 @@
 import { render } from 'ink-testing-library';
+import { createRef } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { FrameSourceInfo } from '../frameSource/index.ts';
+import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
 import { createProceduralSource } from '../proceduralSource/index.ts';
 import { HELP_TEXT, PAUSE_GLYPH, PLAY_GLYPH, PLAYER_TITLE, Player, Video } from './index.tsx';
-import type { PlayerScreen } from './index.tsx';
+import type { PlayerScreen, VideoRef } from './index.tsx';
 
 // Let queued microtasks and immediates settle (getFrameAt/seek promise chains)
 const flush = async (): Promise<void> => {
@@ -44,6 +45,27 @@ const createFakeScreen = (): FakeScreenHarness => {
       dispose: () => {
         harness.disposeCalls += 1;
       },
+    },
+  };
+  return harness;
+};
+
+interface FakeSourceHarness {
+  source: FrameSource;
+  seeks: number[];
+}
+
+const createFakeSource = (info: FrameSourceInfo): FakeSourceHarness => {
+  const harness: FakeSourceHarness = {
+    seeks: [],
+    source: {
+      open: () => Promise.resolve(info),
+      getFrameAt: () => Promise.resolve(new Uint8Array(info.width * info.height * 3)),
+      seek: (timeMs) => {
+        harness.seeks.push(timeMs);
+        return Promise.resolve();
+      },
+      close: () => Promise.resolve(),
     },
   };
   return harness;
@@ -327,6 +349,86 @@ describe('Video chrome and keyboard gating', () => {
     const frame = lastFrame();
     expect(frame).toContain(PLAYER_TITLE.trim());
     expect(frame).toContain(HELP_TEXT);
+
+    unmount();
+  });
+});
+
+describe('VideoRef', () => {
+  const INFO: FrameSourceInfo = {
+    width: 8,
+    height: 4,
+    colorSpace: 'rgb24',
+    durationMs: 20_000,
+    fps: 30,
+  };
+
+  it('exposes HTML5-shaped getters', async () => {
+    const { harness } = { harness: createFakeScreen() };
+    const fake = createFakeSource(INFO);
+    const ref = createRef<VideoRef>();
+    const { unmount } = render(
+      <Video ref={ref} screen={harness.screen} source={fake.source} info={INFO} />,
+    );
+    await flush();
+
+    expect(ref.current?.paused).toBe(true);
+    expect(ref.current?.ended).toBe(false);
+    expect(ref.current?.duration).toBe(20);
+    expect(ref.current?.videoWidth).toBe(8);
+    expect(ref.current?.videoHeight).toBe(4);
+    expect(ref.current?.currentTime).toBe(0);
+
+    unmount();
+  });
+
+  it('play() resolves and starts playback, pause() stops it', async () => {
+    const harness = createFakeScreen();
+    const fake = createFakeSource(INFO);
+    const ref = createRef<VideoRef>();
+    const onPlay = vi.fn();
+    const onPause = vi.fn();
+    const { unmount } = render(
+      <Video
+        ref={ref}
+        screen={harness.screen}
+        source={fake.source}
+        info={INFO}
+        onPlay={onPlay}
+        onPause={onPause}
+      />,
+    );
+    await flush();
+
+    await ref.current?.play();
+    await flush();
+    expect(onPlay).toHaveBeenCalledTimes(1);
+    expect(ref.current?.paused).toBe(false);
+
+    ref.current?.pause();
+    await flush();
+    expect(onPause).toHaveBeenCalledTimes(1);
+    expect(ref.current?.paused).toBe(true);
+
+    unmount();
+  });
+
+  it('setting currentTime seeks in seconds', async () => {
+    const harness = createFakeScreen();
+    const fake = createFakeSource(INFO);
+    const ref = createRef<VideoRef>();
+    const { unmount } = render(
+      <Video ref={ref} screen={harness.screen} source={fake.source} info={INFO} />,
+    );
+    await flush();
+
+    if (ref.current) {
+      ref.current.currentTime = 5;
+    }
+    await flush();
+
+    expect(fake.seeks).toContain(5_000);
+    expect(ref.current?.currentTime).toBe(5);
 
     unmount();
   });
