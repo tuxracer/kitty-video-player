@@ -1,3 +1,6 @@
+import { Screen } from 'kitty-motion';
+
+import type { FrameSourceInfo } from '../frameSource/index.ts';
 import { SEEK_STEP_MS } from '../Video/index.tsx';
 import {
   KEY_ARROW_LEFT,
@@ -11,6 +14,28 @@ import type { FallbackPlayerOptions } from './types.ts';
 
 export * from './consts.ts';
 export * from './types.ts';
+
+/**
+ * Construct the half-block Screen synchronously and probe-free, the same
+ * trick as the Video module's managedScreen. renderMode forced to
+ * "half-block" skips the graphics probe, which matters because an
+ * unsupported terminal may never answer probe queries. fileTransfer false
+ * and dirtyRects false skip the remaining probes. Full-screen destructive
+ * mode: kitty-motion clears the screen, fits and centers the frame, follows
+ * terminal resizes via autoResize, and restores the terminal on dispose.
+ */
+export const createFallbackScreen = (info: FrameSourceInfo): Screen =>
+  new Screen({
+    output: process.stdout,
+    sourceWidth: info.width,
+    sourceHeight: info.height,
+    colorSpace: info.colorSpace,
+    renderMode: 'half-block',
+    fileTransfer: false,
+    dirtyRects: false,
+    embedded: false,
+    autoResize: true,
+  });
 
 /**
  * Playback loop for half-block fallback mode. There is no Ink here because

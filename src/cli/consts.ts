@@ -37,10 +37,9 @@ The full player requires an interactive Kitty or Ghostty terminal (Kitty
 graphics protocol with Unicode placeholder support) outside tmux/screen.
 On other terminals kitty-player offers to play in half-block mode instead.`;
 
-/** Printed to stderr when stdout is not an interactive placeholder-capable terminal */
+/** Printed to stderr when stdout is not an interactive terminal */
 export const UNSUPPORTED_TERMINAL_MESSAGE =
-  'kitty-player needs an interactive Kitty or Ghostty terminal (Kitty graphics ' +
-  'protocol with Unicode placeholder support). Nothing was drawn.';
+  'kitty-player needs an interactive terminal (stdout is not a TTY). Nothing was drawn.';
 
 /** First line of the warning printed before the half-block prompt */
 export const FALLBACK_WARNING_HEADER = 'kitty-player: the full player cannot run here:';

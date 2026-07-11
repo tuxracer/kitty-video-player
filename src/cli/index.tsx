@@ -7,14 +7,25 @@
  * ./parseCliArgs.ts directly.
  */
 import { render } from 'ink';
-import { createScreen, detectKittyUnicodePlaceholderSupport } from 'kitty-motion';
+import { createScreen } from 'kitty-motion';
 
 import { createFfmpegSource, isFfmpegSourceError } from '../ffmpegSource/index.ts';
+import { createFallbackScreen, runFallbackPlayer } from '../fallbackPlayer/index.ts';
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
 import { Video } from '../Video/index.tsx';
 import { computePanelRegion } from '../playerLayout/index.ts';
 import { createProceduralSource } from '../proceduralSource/index.ts';
-import { EXIT_OK, EXIT_USAGE, HELP_TEXT, UNSUPPORTED_TERMINAL_MESSAGE, VERSION } from './consts.ts';
+import { confirmFallback } from './confirmFallback.ts';
+import {
+  EXIT_OK,
+  EXIT_USAGE,
+  FALLBACK_REASON_MESSAGES,
+  FALLBACK_WARNING_HEADER,
+  HELP_TEXT,
+  UNSUPPORTED_TERMINAL_MESSAGE,
+  VERSION,
+} from './consts.ts';
+import { detectFallbackReasons } from './detectFallbackReasons.ts';
 import { parseCliArgs } from './parseCliArgs.ts';
 
 export { parseCliArgs } from './parseCliArgs.ts';
@@ -40,13 +51,29 @@ if (args.action === 'usage-error') {
   process.exit(EXIT_USAGE);
 }
 
-// Guard before creating any Screen or rendering Ink, so the CLI exits cleanly
-// (code 0) in a non-interactive or unsupported terminal (CI-friendly). Also
-// sits before source creation: no point probing a file for a terminal that
-// cannot display frames.
-if (!process.stdout.isTTY || !detectKittyUnicodePlaceholderSupport()) {
+// A prompt is impossible without a TTY and half-block output to a pipe is
+// garbage, so --half-block does not override this. Exit 0 keeps CI green.
+if (!process.stdout.isTTY) {
   process.stderr.write(`${UNSUPPORTED_TERMINAL_MESSAGE}\n`);
   process.exit(EXIT_OK);
+}
+
+// The kitty-graphics player needs placeholder support outside a multiplexer.
+// When it cannot run, offer half-block mode. --half-block skips both the
+// detection and the prompt (it also forces half-block on a supported
+// terminal, doubling as a test path). This all happens before any Screen or
+// Ink render exists, so the prompt can read stdin in cooked mode.
+let halfBlock = args.halfBlock;
+if (!halfBlock) {
+  const reasons = detectFallbackReasons();
+  if (reasons.length > 0) {
+    const reasonLines = reasons.map((reason) => `  - ${FALLBACK_REASON_MESSAGES[reason]}`);
+    process.stderr.write(`${FALLBACK_WARNING_HEADER}\n${reasonLines.join('\n')}\n`);
+    halfBlock = await confirmFallback({ input: process.stdin, output: process.stderr });
+    if (!halfBlock) {
+      process.exit(EXIT_OK);
+    }
+  }
 }
 
 const source: FrameSource =
@@ -59,6 +86,20 @@ try {
   const message = isFfmpegSourceError(error) ? error.message : String(error);
   process.stderr.write(`kitty-player: ${message}\n`);
   process.exit(EXIT_USAGE);
+}
+
+// Half-block mode never touches Ink: the cell renderer owns the whole
+// screen and produces no placeholder rows to lay out. The playback loop
+// resolves when the user quits, with the screen disposed and source closed.
+if (halfBlock) {
+  const fallbackScreen = createFallbackScreen(info);
+  await runFallbackPlayer({
+    screen: fallbackScreen,
+    source,
+    info,
+    input: process.stdin,
+  });
+  process.exit(EXIT_OK);
 }
 
 const region = computePanelRegion({
