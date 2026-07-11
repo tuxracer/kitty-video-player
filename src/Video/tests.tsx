@@ -380,7 +380,7 @@ describe('VideoRef', () => {
   };
 
   it('exposes HTML5-shaped getters', async () => {
-    const { harness } = { harness: createFakeScreen() };
+    const harness = createFakeScreen();
     const fake = createFakeSource(INFO);
     const ref = createRef<VideoRef>();
     const { unmount } = render(

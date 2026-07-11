@@ -74,7 +74,9 @@ export const Video = forwardRef<VideoRef, VideoProps>((props, ref): ReactElement
   const source = props.screen === undefined ? managed.source : props.source;
   const info = props.screen === undefined ? managed.info : props.info;
 
-  const [placeholderRows, setPlaceholderRows] = useState<string[]>([]);
+  const [placeholderRows, setPlaceholderRows] = useState<string[]>(() =>
+    props.screen === undefined ? [] : props.screen.getPlaceholderRows(),
+  );
 
   const clock = usePlaybackClock({
     screen,
@@ -123,6 +125,9 @@ export const Video = forwardRef<VideoRef, VideoProps>((props, ref): ReactElement
         return info?.height ?? 0;
       },
     }),
+    // clock is a new object every render (usePlaybackClock does not memoize
+    // its return), so this dependency keeps the handle fresh. Memoizing the
+    // hook's return instead would stale paused/ended here.
     [clock, info],
   );
 
