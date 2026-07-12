@@ -4,6 +4,27 @@
   "description": "Terminal video player. Ink UI with a kitty-motion video panel over Kitty graphics Unicode placeholders.",
   "type": "module",
   "license": "MIT",
+  "author": "Derek Petersen",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tuxracer/kitty-player.git"
+  },
+  "homepage": "https://github.com/tuxracer/kitty-player#readme",
+  "bugs": {
+    "url": "https://github.com/tuxracer/kitty-player/issues"
+  },
+  "keywords": [
+    "terminal",
+    "video",
+    "player",
+    "kitty",
+    "kitty-graphics",
+    "ghostty",
+    "ink",
+    "ffmpeg",
+    "cli",
+    "tui"
+  ],
   "engines": {
     "node": ">=24.0.0"
   },
