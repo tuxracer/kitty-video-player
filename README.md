@@ -53,11 +53,13 @@ a hue-cycling ball moving on a Lissajous path over a 20 second loop.
 
 ## CLI flags
 
-| Flag              | Action                                                                |
-| ----------------- | --------------------------------------------------------------------- |
-| `<file>`          | play this video file (optional, plays the built-in demo when omitted) |
-| `-h`, `--help`    | print help and exit                                                   |
-| `-v`, `--version` | print the version and exit                                            |
+| Flag                   | Action                                                                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<file>`               | play this video file (optional, plays the built-in demo when omitted)                                                                         |
+| `-h`, `--help`         | print help and exit                                                                                                                           |
+| `-v`, `--version`      | print the version and exit                                                                                                                    |
+| `--fallback`           | play with the fallback cell renderer instead of kitty graphics (works on any terminal and inside tmux or screen, no on-screen UI)             |
+| `--render-mode <mode>` | force a render mode: kitty, half-block, cell-background, emoji, or ascii (kitty forces the full player, cell modes force the fallback player) |
 
 ## How it works
 
