@@ -6,6 +6,7 @@ describe('isRecord', () => {
   it('accepts plain objects and arrays are objects too', () => {
     expect(isRecord({})).toBe(true);
     expect(isRecord({ a: 1 })).toBe(true);
+    expect(isRecord([])).toBe(true);
   });
 
   it('rejects null, primitives, and undefined', () => {
