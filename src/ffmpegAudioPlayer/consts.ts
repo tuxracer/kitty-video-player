@@ -29,6 +29,12 @@ export const VOLUME_MUTED = 0;
 /** Device output volume while audible */
 export const VOLUME_FULL = 1;
 
+/**
+ * Tick period of the adapter's frame-pacing timer, finer than one device
+ * frame (about 21 ms at the default size) so backpressure resumes promptly
+ */
+export const FRAME_PACING_INTERVAL_MS = 10;
+
 /** Rolling tail of ffmpeg stderr kept for error reporting */
 export const STDERR_TAIL_MAX_CHARS = 2_048;
 

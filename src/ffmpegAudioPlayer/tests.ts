@@ -111,12 +111,99 @@ describe('createRtAudioDevice', () => {
     expect(args[2]).toBe(RTAUDIO_FORMAT_SINT16);
     expect(args[3]).toBe(SAMPLE_RATE);
     expect(args[4]).toBe(1_024);
+    // Never register audify's native frameOutputCallback: it creates a
+    // thread-safe function that audify never releases, so the process can
+    // never exit again once a stream was opened with one
+    expect(args[7]).toBeNull();
+    device?.close();
+  });
+
+  it('paces onFrameDone from the clock, clamped to frames written', async () => {
+    vi.useFakeTimers();
+    try {
+      // Pin the frame size the stream actually opens with (the pacing must
+      // follow it, not the requested size)
+      audifyMock.state.openStreamReturn = 1_024;
+      let frameDone = 0;
+      const device = await createRtAudioDevice({
+        ...deviceOptions(),
+        onFrameDone: () => {
+          frameDone += 1;
+        },
+      });
+      // 1_024 samples at 48 kHz is about 21.3 ms per frame
+      device?.write(Buffer.alloc(16));
+      device?.write(Buffer.alloc(16));
+      device?.write(Buffer.alloc(16));
+      // Nothing has had time to play yet
+      expect(frameDone).toBe(0);
+      // Two frame durations later (next pacing tick at 50 ms), two frames finished
+      await vi.advanceTimersByTimeAsync(50);
+      expect(frameDone).toBe(2);
+      // The clock keeps running but only three frames were ever written
+      await vi.advanceTimersByTimeAsync(500);
+      expect(frameDone).toBe(3);
+      // New writes resume the pacing
+      device?.write(Buffer.alloc(16));
+      await vi.advanceTimersByTimeAsync(50);
+      expect(frameDone).toBe(4);
+      device?.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clearQueue resets the pacing so dropped frames never report as played', async () => {
+    vi.useFakeTimers();
+    try {
+      audifyMock.state.openStreamReturn = 1_024;
+      let frameDone = 0;
+      const device = await createRtAudioDevice({
+        ...deviceOptions(),
+        onFrameDone: () => {
+          frameDone += 1;
+        },
+      });
+      device?.write(Buffer.alloc(16));
+      device?.write(Buffer.alloc(16));
+      device?.clearQueue();
+      // The cleared frames were dropped from the device queue, they must
+      // not finish playing
+      await vi.advanceTimersByTimeAsync(500);
+      expect(frameDone).toBe(0);
+      device?.write(Buffer.alloc(16));
+      await vi.advanceTimersByTimeAsync(50);
+      expect(frameDone).toBe(1);
+      device?.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('close stops the pacing timer', async () => {
+    vi.useFakeTimers();
+    try {
+      let frameDone = 0;
+      const device = await createRtAudioDevice({
+        ...deviceOptions(),
+        onFrameDone: () => {
+          frameDone += 1;
+        },
+      });
+      device?.write(Buffer.alloc(16));
+      device?.close();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(frameDone).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reports the frame size the stream actually opened with', async () => {
     audifyMock.state.openStreamReturn = 480;
     const device = await createRtAudioDevice(deviceOptions());
     expect(device?.frameSize).toBe(480);
+    device?.close();
   });
 
   it('delegates write, clearQueue, setVolume, and close to the stream', async () => {

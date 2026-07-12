@@ -1,5 +1,5 @@
 import { isRecord } from '../isRecord/index.ts';
-import { RTAUDIO_FORMAT_SINT16 } from './consts.ts';
+import { FRAME_PACING_INTERVAL_MS, MS_PER_SECOND, RTAUDIO_FORMAT_SINT16 } from './consts.ts';
 import type { CreateAudioDevice, RtAudioStream } from './types.ts';
 
 /** True when value quacks like the RtAudio instance the adapter drives */
@@ -47,21 +47,60 @@ export const createRtAudioDevice: CreateAudioDevice = async ({
       frameSize,
       'kitty-video-player',
       null,
-      onFrameDone,
+      // NEVER pass onFrameDone here: audify's frameOutputCallback registers
+      // a native thread-safe function that is released neither by
+      // closeStream() nor by setFrameOutputCallback(null), so the process
+      // can never exit again once a stream was opened with one. The pacing
+      // timer below emulates the callback instead.
+      null,
     );
     instance.start();
+    const effectiveFrameSize = actualFrameSize > 0 ? actualFrameSize : frameSize;
+    const frameDurationMs = (effectiveFrameSize / sampleRate) * MS_PER_SECOND;
+
+    // Wall-clock emulation of RtAudio's per-frame playback callback. The
+    // device consumes one frame per frameDurationMs while its queue is
+    // non-empty, so onFrameDone fires paced from the moment the current
+    // backlog started playing, clamped to what was actually written. The
+    // timer is unref'd so it never keeps the process alive on its own.
+    let framesWritten = 0;
+    let framesDone = 0;
+    let playbackBaseMs = 0;
+    let framesDoneAtBase = 0;
+    const pacingTimer = setInterval(() => {
+      if (framesDone >= framesWritten) {
+        return;
+      }
+      const playedSinceBase = Math.floor((Date.now() - playbackBaseMs) / frameDurationMs);
+      const target = Math.min(framesWritten, framesDoneAtBase + playedSinceBase);
+      while (framesDone < target) {
+        framesDone += 1;
+        onFrameDone();
+      }
+    }, FRAME_PACING_INTERVAL_MS);
+    pacingTimer.unref();
+
     return {
-      frameSize: actualFrameSize > 0 ? actualFrameSize : frameSize,
+      frameSize: effectiveFrameSize,
       write: (pcm) => {
+        if (framesWritten === framesDone) {
+          // The queue was empty, this write starts a fresh playback run
+          playbackBaseMs = Date.now();
+          framesDoneAtBase = framesDone;
+        }
+        framesWritten += 1;
         instance.write(pcm);
       },
       clearQueue: () => {
         instance.clearOutputQueue();
+        // Dropped frames never finish playing, so they leave the pacing too
+        framesWritten = framesDone;
       },
       setVolume: (volume) => {
         instance.outputVolume = volume;
       },
       close: () => {
+        clearInterval(pacingTimer);
         try {
           instance.stop();
           instance.closeStream();

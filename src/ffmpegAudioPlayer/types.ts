@@ -57,7 +57,8 @@ export interface RtAudioStream {
     frameSize: number,
     streamName: string,
     inputCallback: null,
-    frameOutputCallback: () => void,
+    /** Must stay null: audify never releases the native callback (see the adapter) */
+    frameOutputCallback: (() => void) | null,
   ): number;
   getDefaultOutputDevice(): number;
   start(): void;
