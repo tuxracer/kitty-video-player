@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -10,6 +10,8 @@ import ffmpegPath from 'ffmpeg-static';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { FrameSource } from '../frameSource/index.ts';
+import { isMediaProbeError } from '../mediaProbe/index.ts';
+import type { MediaProbeErrorCode } from '../mediaProbe/index.ts';
 import {
   FfmpegSourceError,
   MAX_DECODE_HEIGHT,
@@ -18,7 +20,6 @@ import {
   computeDecodeSize,
   createFfmpegSource,
   isFfmpegSourceError,
-  probeFile,
 } from './index.ts';
 import type { FfmpegSourceErrorCode } from './index.ts';
 
@@ -30,7 +31,6 @@ let fixtureDir: string;
 let smallVideo: string;
 let largeVideo: string;
 let audioOnly: string;
-let notVideo: string;
 let rotatedVideo: string;
 let noDurationVideo: string;
 let soundVideo: string;
@@ -45,7 +45,6 @@ beforeAll(async () => {
   smallVideo = join(fixtureDir, 'small.mp4');
   largeVideo = join(fixtureDir, 'large.mp4');
   audioOnly = join(fixtureDir, 'audio-only.m4a');
-  notVideo = join(fixtureDir, 'not-a-video.txt');
   rotatedVideo = join(fixtureDir, 'rotated.mp4');
   noDurationVideo = join(fixtureDir, 'no-duration.mkv');
   soundVideo = join(fixtureDir, 'sound.mp4');
@@ -64,7 +63,6 @@ beforeAll(async () => {
   await execFileAsync(ffmpegPath, [
     '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:a', 'aac', audioOnly,
   ]);
-  await writeFile(notVideo, 'this is not a media file\n');
 
   const rotatedSource = join(fixtureDir, 'rotated-source.mp4');
   await execFileAsync(ffmpegPath, [
@@ -102,18 +100,34 @@ const expectCode = async (
   throw new Error(`expected a rejection with code ${code}`);
 };
 
+const expectProbeCode = async (
+  promise: Promise<unknown>,
+  code: MediaProbeErrorCode,
+): Promise<void> => {
+  try {
+    await promise;
+  } catch (error) {
+    expect(isMediaProbeError(error)).toBe(true);
+    if (isMediaProbeError(error)) {
+      expect(error.code).toBe(code);
+    }
+    return;
+  }
+  throw new Error(`expected a rejection with code ${code}`);
+};
+
 describe('FfmpegSourceError', () => {
   it('is identified by the isFfmpegSourceError guard', () => {
-    const error = new FfmpegSourceError('FILE_NOT_FOUND', 'missing.mp4: no such file');
+    const error = new FfmpegSourceError('NO_VIDEO_STREAM', 'song.mp3: no video stream');
     expect(isFfmpegSourceError(error)).toBe(true);
-    expect(error.code).toBe('FILE_NOT_FOUND');
-    expect(error.message).toBe('missing.mp4: no such file');
+    expect(error.code).toBe('NO_VIDEO_STREAM');
+    expect(error.message).toBe('song.mp3: no video stream');
     expect(error.name).toBe('FfmpegSourceError');
   });
 
   it('rejects plain errors and non-errors', () => {
-    expect(isFfmpegSourceError(new Error('FILE_NOT_FOUND'))).toBe(false);
-    expect(isFfmpegSourceError('FILE_NOT_FOUND')).toBe(false);
+    expect(isFfmpegSourceError(new Error('NO_VIDEO_STREAM'))).toBe(false);
+    expect(isFfmpegSourceError('NO_VIDEO_STREAM')).toBe(false);
     expect(isFfmpegSourceError(null)).toBe(false);
   });
 });
@@ -139,48 +153,6 @@ describe('computeDecodeSize', () => {
   it('rounds fitted dimensions to even numbers', () => {
     // scale = 960/963, height 541 * scale = 539.3, rounded to even
     expect(computeDecodeSize(963, 541)).toEqual({ width: 960, height: 540 });
-  });
-});
-
-describe('probeFile', () => {
-  it('reads dimensions, duration, and fps from a real video', async () => {
-    const probe = await probeFile(smallVideo);
-    expect(probe.nativeWidth).toBe(64);
-    expect(probe.nativeHeight).toBe(36);
-    expect(probe.fps).toBe(10);
-    expect(probe.durationMs).toBeGreaterThanOrEqual(1_900);
-    expect(probe.durationMs).toBeLessThanOrEqual(2_100);
-  });
-
-  it('rejects a missing path with FILE_NOT_FOUND', async () => {
-    await expectCode(probeFile(join(fixtureDir, 'missing.mp4')), 'FILE_NOT_FOUND');
-  });
-
-  it('rejects a non-media file with PROBE_FAILED', async () => {
-    await expectCode(probeFile(notVideo), 'PROBE_FAILED');
-  });
-
-  it('rejects an audio-only file with NO_VIDEO_STREAM', async () => {
-    await expectCode(probeFile(audioOnly), 'NO_VIDEO_STREAM');
-  });
-
-  it('swaps dimensions for quarter-turned rotation metadata', async () => {
-    const probe = await probeFile(rotatedVideo);
-    expect(probe.nativeWidth).toBe(36);
-    expect(probe.nativeHeight).toBe(64);
-  });
-
-  it('reports hasAudio for a file with an audio track and not for a silent one', async () => {
-    const withSound = await probeFile(soundVideo);
-    expect(withSound.hasAudio).toBe(true);
-    const silent = await probeFile(smallVideo);
-    expect(silent.hasAudio).toBe(false);
-  });
-
-  it('measures duration when the container header lacks one', async () => {
-    const probe = await probeFile(noDurationVideo);
-    expect(probe.durationMs).toBeGreaterThanOrEqual(900);
-    expect(probe.durationMs).toBeLessThanOrEqual(1_100);
   });
 });
 
@@ -231,7 +203,32 @@ describe('createFfmpegSource', () => {
 
   it('rejects open() for a missing file with FILE_NOT_FOUND', async () => {
     const source = createFfmpegSource({ filePath: join(fixtureDir, 'missing.mp4') });
-    await expectCode(source.open(), 'FILE_NOT_FOUND');
+    await expectProbeCode(source.open(), 'FILE_NOT_FOUND');
+  });
+
+  it('rejects open() for an audio-only file with NO_VIDEO_STREAM', async () => {
+    const source = createFfmpegSource({ filePath: audioOnly });
+    await expectCode(source.open(), 'NO_VIDEO_STREAM');
+  });
+
+  it('skips its own probe when a pre-computed probe is given', async () => {
+    const source = createFfmpegSource({
+      filePath: smallVideo,
+      probe: {
+        kind: 'video',
+        nativeWidth: 64,
+        nativeHeight: 36,
+        durationMs: 2_000,
+        fps: 10,
+        hasAudio: false,
+      },
+    });
+    const info = await source.open();
+    expect(info.width).toBe(64);
+    expect(info.durationMs).toBe(2_000);
+    const frame = await waitForFrame(source, 0);
+    expect(frame.length).toBe(64 * 36 * RGB_CHANNELS);
+    await source.close();
   });
 
   it('serves frames of width * height * 3 bytes that change over time', async () => {
@@ -409,19 +406,6 @@ describe('http(s) URL sources', () => {
     await new Promise<void>((resolve, reject) => {
       fixtureServer.close((error) => (error === undefined ? resolve() : reject(error)));
     });
-  });
-
-  it('probes a URL without requiring a local file', async () => {
-    const probe = await probeFile(`${fixtureBaseUrl}/${basename(smallVideo)}`);
-    expect(probe.nativeWidth).toBe(64);
-    expect(probe.nativeHeight).toBe(36);
-    expect(probe.fps).toBe(10);
-    expect(probe.durationMs).toBeGreaterThanOrEqual(1_900);
-  });
-
-  it('rejects an unreachable URL with PROBE_FAILED, not FILE_NOT_FOUND', async () => {
-    // Port 1 is privileged and unbound, so the connection is refused fast
-    await expectCode(probeFile('http://127.0.0.1:1/missing.mp4'), 'PROBE_FAILED');
   });
 
   it('serves frames from a URL', async () => {

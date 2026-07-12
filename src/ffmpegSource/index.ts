@@ -5,6 +5,8 @@ import ffmpegPath from 'ffmpeg-static';
 import { detectRangeSupport } from '../detectRangeSupport/index.ts';
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
 import { isRemoteUrl } from '../isRemoteUrl/index.ts';
+import { probeMediaFile } from '../mediaProbe/index.ts';
+import type { VideoProbeResult } from '../mediaProbe/index.ts';
 import {
   MS_PER_SECOND,
   READAHEAD_FRAME_CAP,
@@ -12,7 +14,7 @@ import {
   STDERR_TAIL_MAX_CHARS,
 } from './consts.ts';
 import { FfmpegSourceError } from './errors.ts';
-import { computeDecodeSize, probeFile } from './probe.ts';
+import { computeDecodeSize } from './probe.ts';
 import type { Decoder, FfmpegSourceOptions } from './types.ts';
 
 export * from './consts.ts';
@@ -152,10 +154,21 @@ export const createFfmpegSource = (options: FfmpegSourceOptions): FrameSource =>
     }
   };
 
+  const resolveVideoProbe = async (): Promise<VideoProbeResult> => {
+    if (options.probe !== undefined) {
+      return options.probe;
+    }
+    const probe = await probeMediaFile(filePath);
+    if (probe.kind !== 'video') {
+      throw new FfmpegSourceError('NO_VIDEO_STREAM', `${filePath}: no video stream`);
+    }
+    return probe;
+  };
+
   const open = async (): Promise<FrameSourceInfo> => {
     // The range probe (never rejects) rides along with the metadata read
     const [probe, rangeSupport] = await Promise.all([
-      probeFile(filePath),
+      resolveVideoProbe(),
       isRemoteUrl(filePath) ? detectRangeSupport(filePath) : true,
     ]);
     inputSeekable = rangeSupport;

@@ -79,3 +79,12 @@ export { formatTime } from './formatTime/index.ts';
 export { FfmpegSourceError, createFfmpegSource, isFfmpegSourceError } from './ffmpegSource/index.ts';
 export type { DecodeSize, FfmpegSourceErrorCode, FfmpegSourceOptions } from './ffmpegSource/index.ts';
 export { MAX_DECODE_HEIGHT, MAX_DECODE_WIDTH, computeDecodeSize } from './ffmpegSource/index.ts';
+
+export { MediaProbeError, isMediaProbeError, probeMediaFile } from './mediaProbe/index.ts';
+export type {
+  AudioProbeResult,
+  CoverArtInfo,
+  MediaProbeErrorCode,
+  MediaProbeResult,
+  VideoProbeResult,
+} from './mediaProbe/index.ts';

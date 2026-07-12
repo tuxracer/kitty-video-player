@@ -1,31 +1,21 @@
 import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 
+import type { VideoProbeResult } from '../mediaProbe/index.ts';
+
 export interface FfmpegSourceOptions {
   /** Path to the video file to decode */
   filePath: string;
+  /**
+   * Pre-computed classification from probeMediaFile. When given, open()
+   * skips its own probe, so a caller that already classified the file
+   * (the cli does) never probes it twice.
+   */
+  probe?: VideoProbeResult;
 }
 
-/** Machine-readable reasons an ffmpeg source can fail */
-export type FfmpegSourceErrorCode =
-  | 'FILE_NOT_FOUND'
-  | 'PROBE_FAILED'
-  | 'NO_VIDEO_STREAM'
-  | 'DECODE_FAILED';
-
-/** Video stream metadata read by ffprobe, in source-native dimensions */
-export interface ProbeResult {
-  /** Native pixel width of the video stream */
-  nativeWidth: number;
-  /** Native pixel height of the video stream */
-  nativeHeight: number;
-  /** Total duration in ms */
-  durationMs: number;
-  /** Native frame rate */
-  fps: number;
-  /** True when the container also carries an audio stream */
-  hasAudio: boolean;
-}
+/** Machine-readable reasons an ffmpeg source can fail (probe failures reject as MediaProbeError) */
+export type FfmpegSourceErrorCode = 'NO_VIDEO_STREAM' | 'DECODE_FAILED';
 
 /** Decode dimensions fitted within the MAX_DECODE_* caps */
 export interface DecodeSize {
