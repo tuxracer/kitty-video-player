@@ -1,6 +1,7 @@
 import type { ColorSpace, ScreenRegion } from 'kitty-motion';
 import type { ReactNode } from 'react';
 
+import type { AudioPlayer } from '../audioPlayer/index.ts';
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
 
 /**
@@ -44,6 +45,8 @@ export interface PlaybackClockOptions extends PlaybackCallbacks {
   screen: PlayerScreen | null;
   source: FrameSource | null;
   info: FrameSourceInfo | null;
+  /** Audio following the clock, or null/absent when the source has no audio */
+  audio?: AudioPlayer | null;
   /** Start the clock immediately */
   autoPlay: boolean;
   /** Wrap at the end instead of stopping */
@@ -152,6 +155,8 @@ export interface ExternalVideoProps extends VideoBaseProps {
   /** An already-opened source, the host owns its lifecycle */
   source: FrameSource;
   info: FrameSourceInfo;
+  /** An already-opened audio player, the host owns its lifecycle */
+  audio?: AudioPlayer;
 }
 
 export interface ManagedVideoProps extends VideoBaseProps {

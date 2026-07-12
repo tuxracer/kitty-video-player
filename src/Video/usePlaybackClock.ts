@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { MS_PER_SECOND } from './consts.ts';
+import { DRIFT_RESYNC_THRESHOLD_MS, MS_PER_SECOND } from './consts.ts';
 import type { PlaybackClock, PlaybackClockOptions } from './types.ts';
 
 /**
@@ -16,6 +16,7 @@ export const usePlaybackClock = ({
   screen,
   source,
   info,
+  audio,
   autoPlay,
   loop,
   stderrNote,
@@ -39,6 +40,11 @@ export const usePlaybackClock = ({
   // rerender never restarts the interval effect.
   const callbacksRef = useRef({ onTimeUpdate, onPlay, onPause, onEnded, onError });
   callbacksRef.current = { onTimeUpdate, onPlay, onPause, onEnded, onError };
+
+  // The audio player lives in a ref for the same reason the callbacks do:
+  // play/pause/seek callbacks stay dependency-free across host rerenders.
+  const audioRef = useRef(audio ?? null);
+  audioRef.current = audio ?? null;
 
   const noteSourceError = useCallback(
     (error: unknown): void => {
@@ -75,6 +81,17 @@ export const usePlaybackClock = ({
               currentTime: nextMs / MS_PER_SECOND,
               duration: info.durationMs / MS_PER_SECOND,
             });
+            // Drift snap: the video clock silently stalls when a slow
+            // source trips the in-flight guard, so audio can run ahead.
+            // Once per displayed second is enough correction.
+            const audioPositionMs = audioRef.current?.getPositionMs() ?? null;
+            if (
+              audioPositionMs !== null &&
+              playingRef.current &&
+              Math.abs(audioPositionMs - nextMs) > DRIFT_RESYNC_THRESHOLD_MS
+            ) {
+              audioRef.current?.playFrom(nextMs);
+            }
           }
         })
         .catch(noteSourceError)
@@ -92,6 +109,7 @@ export const usePlaybackClock = ({
     playingRef.current = false;
     setPlaying(false);
     callbacksRef.current.onPause?.();
+    audioRef.current?.pause();
   }, []);
 
   const play = useCallback((): void => {
@@ -108,6 +126,7 @@ export const usePlaybackClock = ({
     playingRef.current = true;
     setPlaying(true);
     callbacksRef.current.onPlay?.();
+    audioRef.current?.playFrom(elapsedRef.current);
   }, []);
 
   const togglePlay = useCallback((): void => {
@@ -134,6 +153,9 @@ export const usePlaybackClock = ({
       return;
     }
     showFrameAt(elapsedRef.current);
+    if (playingRef.current) {
+      audioRef.current?.playFrom(elapsedRef.current);
+    }
     const intervalMs = Math.round(MS_PER_SECOND / info.fps);
     const interval = setInterval(() => {
       if (!playingRef.current || !screen.isWritable() || inFlightRef.current) {
@@ -145,7 +167,9 @@ export const usePlaybackClock = ({
         return;
       }
       if (loop) {
-        showFrameAt(nextMs % info.durationMs);
+        const wrappedMs = nextMs % info.durationMs;
+        showFrameAt(wrappedMs);
+        audioRef.current?.playFrom(wrappedMs);
         return;
       }
       // End of stream: park on the final frame, stop, and report. Elapsed
@@ -164,9 +188,11 @@ export const usePlaybackClock = ({
       setEnded(true);
       callbacksRef.current.onPause?.();
       callbacksRef.current.onEnded?.();
+      audioRef.current?.pause();
     }, intervalMs);
     return () => {
       clearInterval(interval);
+      audioRef.current?.pause();
     };
   }, [info, loop, screen, showFrameAt, source]);
 
@@ -178,6 +204,9 @@ export const usePlaybackClock = ({
       const clampedMs = Math.min(Math.max(targetMs, 0), info.durationMs);
       endedRef.current = false;
       setEnded(false);
+      if (playingRef.current) {
+        audioRef.current?.playFrom(clampedMs);
+      }
       void source
         .seek(clampedMs)
         .then(() => {

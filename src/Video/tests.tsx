@@ -3,14 +3,17 @@ import { render } from 'ink-testing-library';
 import { createRef } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { AudioPlayer } from '../audioPlayer/index.ts';
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
 import { createProceduralSource } from '../proceduralSource/index.ts';
 import {
+  DRIFT_RESYNC_THRESHOLD_MS,
   HELP_TEXT,
   isVideoError,
   PAUSE_GLYPH,
   PLAY_GLYPH,
   PLAYER_TITLE,
+  SEEK_STEP_MS,
   Video,
 } from './index.tsx';
 import type { PlayerScreen, VideoRef } from './index.tsx';
@@ -81,6 +84,43 @@ const createFakeSource = (info: FrameSourceInfo): FakeSourceHarness => {
         return Promise.resolve();
       },
       close: () => Promise.resolve(),
+    },
+  };
+  return harness;
+};
+
+interface FakeAudioHarness {
+  audio: AudioPlayer;
+  playFroms: number[];
+  pauseCalls: number;
+  mutedValues: boolean[];
+  closeCalls: number;
+  positionMs: number | null;
+}
+
+const createFakeAudio = (): FakeAudioHarness => {
+  const harness: FakeAudioHarness = {
+    playFroms: [],
+    pauseCalls: 0,
+    mutedValues: [],
+    closeCalls: 0,
+    positionMs: null,
+    audio: {
+      open: () => Promise.resolve({ hasAudio: true }),
+      playFrom: (timeMs) => {
+        harness.playFroms.push(timeMs);
+      },
+      pause: () => {
+        harness.pauseCalls += 1;
+      },
+      setMuted: (muted) => {
+        harness.mutedValues.push(muted);
+      },
+      getPositionMs: () => harness.positionMs,
+      close: () => {
+        harness.closeCalls += 1;
+        return Promise.resolve();
+      },
     },
   };
   return harness;
@@ -582,6 +622,123 @@ describe('Video self-managed mode', () => {
 
     expect(harness.setRegionCalls).toBeGreaterThan(callsBefore);
 
+    unmount();
+  });
+});
+
+describe('Video audio wiring', () => {
+  it('starts audio from zero on autoPlay mount and pauses it on unmount', async () => {
+    const { harness, source, info } = await setup();
+    const audio = createFakeAudio();
+    const { unmount } = render(
+      <Video screen={harness.screen} source={source} info={info} audio={audio.audio} autoPlay keyboard />,
+    );
+    await flush();
+    expect(audio.playFroms[0]).toBe(0);
+    unmount();
+    // Effect cleanup (where the pause call lives) is a passive effect, so it
+    // is not flushed synchronously by Ink's unmount(); matches the flush
+    // after unmount() already used elsewhere in this file (e.g. "disposes
+    // the screen and closes the source on unmount").
+    await flush();
+    expect(audio.pauseCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  it('pauses audio on space and resumes from the playhead', async () => {
+    const { harness, source, info } = await setup();
+    const audio = createFakeAudio();
+    const { stdin, unmount } = render(
+      <Video screen={harness.screen} source={source} info={info} audio={audio.audio} autoPlay keyboard />,
+    );
+    await flush();
+    const pausesBefore = audio.pauseCalls;
+    stdin.write(' ');
+    await flush();
+    expect(audio.pauseCalls).toBe(pausesBefore + 1);
+    const playsBefore = audio.playFroms.length;
+    stdin.write(' ');
+    await flush();
+    expect(audio.playFroms.length).toBe(playsBefore + 1);
+    unmount();
+  });
+
+  it('restarts audio at the seek target while playing', async () => {
+    const { harness, source, info } = await setup();
+    const audio = createFakeAudio();
+    const { stdin, unmount } = render(
+      <Video screen={harness.screen} source={source} info={info} audio={audio.audio} autoPlay keyboard />,
+    );
+    await flush();
+    stdin.write('[C'); // right arrow
+    await flush();
+    expect(audio.playFroms.at(-1)).toBeGreaterThanOrEqual(SEEK_STEP_MS);
+    unmount();
+  });
+
+  it('does not restart audio when seeking while paused', async () => {
+    const { harness, source, info } = await setup();
+    const audio = createFakeAudio();
+    const { stdin, unmount } = render(
+      <Video screen={harness.screen} source={source} info={info} audio={audio.audio} autoPlay keyboard />,
+    );
+    await flush();
+    stdin.write(' ');
+    await flush();
+    const playsBefore = audio.playFroms.length;
+    stdin.write('[C'); // right arrow
+    await flush();
+    expect(audio.playFroms.length).toBe(playsBefore);
+    unmount();
+  });
+
+  it('snaps audio back to the clock when drift exceeds the threshold', async () => {
+    const { harness, source, info } = await setup();
+    const audio = createFakeAudio();
+    const { unmount } = render(
+      <Video screen={harness.screen} source={source} info={info} audio={audio.audio} autoPlay keyboard />,
+    );
+    await flush();
+    const playsBefore = audio.playFroms.length;
+    // Report a position far beyond any real playhead, the next whole-second
+    // boundary must snap audio back to the clock time
+    audio.positionMs = 60_000;
+    await delay(1_300);
+    await flush();
+    expect(audio.playFroms.length).toBeGreaterThan(playsBefore);
+    expect(audio.playFroms.at(-1)).toBeLessThan(60_000 - DRIFT_RESYNC_THRESHOLD_MS);
+    unmount();
+  });
+
+  it('leaves audio alone when drift stays under the threshold', async () => {
+    const { harness, source, info } = await setup();
+    const audio = createFakeAudio();
+    const { unmount } = render(
+      <Video screen={harness.screen} source={source} info={info} audio={audio.audio} autoPlay keyboard />,
+    );
+    await flush();
+    const playsBefore = audio.playFroms.length;
+    // Track the clock closely: recompute a near-playhead position on demand
+    audio.positionMs = 0;
+    const tracker = setInterval(() => {
+      audio.positionMs = (audio.positionMs ?? 0) + 100;
+    }, 100);
+    await delay(1_300);
+    clearInterval(tracker);
+    await flush();
+    expect(audio.playFroms.length).toBe(playsBefore);
+    unmount();
+  });
+
+  it('closes the audio player on quit', async () => {
+    const { harness, source, info } = await setup();
+    const audio = createFakeAudio();
+    const { stdin, unmount } = render(
+      <Video screen={harness.screen} source={source} info={info} audio={audio.audio} autoPlay keyboard />,
+    );
+    await flush();
+    stdin.write('q');
+    await flush();
+    expect(audio.closeCalls).toBe(1);
     unmount();
   });
 });

@@ -30,3 +30,6 @@ export const LOADING_DELAY_MS = 1_000;
 
 /** Shown centered in the reserved box while the source opens slowly */
 export const LOADING_TEXT = 'loading video…';
+
+/** Audio drifting further than this from the video clock snaps back to the playhead */
+export const DRIFT_RESYNC_THRESHOLD_MS = 250;
