@@ -85,8 +85,9 @@ export const createFallbackScreen = (info: FrameSourceInfo, renderMode: RenderMo
  * rows, so there is nothing for Ink to lay out. This is a plain-function port of
  * usePlaybackClock's behavior (a setInterval at the source frame rate, an
  * in-flight guard so async getFrameAt calls never pile up, frames straight
- * to pushFrame), always autoplay and always loop, matching what the cli
- * passes to Video. Keys come from a raw stdin data listener. Resolves when
+ * to pushFrame, and the same buffering gate holding the clock and audio at
+ * startup, seeks, and wraps until the source delivers the gated frame),
+ * always autoplay and always loop, matching what the cli passes to Video. Keys come from a raw stdin data listener. Resolves when
  * the user quits, after the screen is disposed and the source is closed.
  */
 export const runFallbackPlayer = ({
@@ -104,6 +105,12 @@ export const runFallbackPlayer = ({
     let sourceErrorNoted = false;
     let audioMuted = muted;
     let lastDriftSecond = 0;
+    // The buffering gate and its timeline, mirroring usePlaybackClock: the
+    // playhead holds (and audio stays silent) until the source delivers the
+    // frame at the gated position, and a bumped timeline keeps a fetch from
+    // before a seek from writing its timestamp over the new position.
+    let waiting = true;
+    let timeline = 0;
     const intervalMs = Math.round(MS_PER_SECOND / info.fps);
     audio?.setMuted(audioMuted);
 
@@ -119,11 +126,28 @@ export const runFallbackPlayer = ({
         return;
       }
       inFlight = true;
+      const fetchTimeline = timeline;
       void source
         .getFrameAt(nextMs)
         .then((frame) => {
           if (frame) {
             screen.pushFrame(frame);
+          }
+          if (timeline !== fetchTimeline) {
+            // A seek or wrap superseded this fetch, keep the new position
+            return;
+          }
+          if (waiting) {
+            if (!frame) {
+              // Still buffering: hold the playhead until the frame lands
+              return;
+            }
+            waiting = false;
+            // Audio was deferred while the gate held, start it at the
+            // position the picture actually resumed from
+            if (playing) {
+              audio?.playFrom(nextMs);
+            }
           }
           elapsedMs = nextMs;
         })
@@ -133,11 +157,18 @@ export const runFallbackPlayer = ({
         });
     };
 
+    // Synchronous playhead move shared by seeks and wraps: bump the
+    // timeline and gate the clock on the frame at the target. Audio
+    // restarts through the gate, not here.
+    const movePlayheadTo = (targetMs: number): void => {
+      timeline += 1;
+      waiting = true;
+      elapsedMs = targetMs;
+    };
+
     const seekToMs = (targetMs: number): void => {
       const clampedMs = Math.min(Math.max(targetMs, 0), info.durationMs);
-      if (playing) {
-        audio?.playFrom(clampedMs);
-      }
+      movePlayheadTo(clampedMs);
       void source
         .seek(clampedMs)
         .then(() => {
@@ -147,12 +178,18 @@ export const runFallbackPlayer = ({
     };
 
     showFrameAt(0);
-    audio?.playFrom(0);
     const interval = setInterval(() => {
       if (!playing || !screen.isWritable() || inFlight) {
         return;
       }
       const nextMs = elapsedMs + intervalMs;
+      if (waiting && nextMs < info.durationMs) {
+        // Buffering: retry the gated position instead of advancing. At the
+        // end of the stream this falls through so a gated playhead parked
+        // there still reaches the wrap below.
+        showFrameAt(elapsedMs);
+        return;
+      }
       if (nextMs < info.durationMs) {
         // Drift snap once per whole second, on non-wrap ticks only, so a
         // wrap tick never fires a redundant snap right before its own
@@ -171,13 +208,13 @@ export const runFallbackPlayer = ({
         return;
       }
       // Always loop, wrapping like usePlaybackClock's loop branch. The
-      // wrap restarts audio itself, so realign the drift tracker to the
-      // wrapped second instead of letting the post-wrap second change
-      // trigger a spurious check.
+      // gate restarts audio when the wrapped frame paints, so realign the
+      // drift tracker to the wrapped second instead of letting the
+      // post-wrap second change trigger a spurious check.
       const wrappedMs = nextMs % info.durationMs;
       lastDriftSecond = Math.floor(wrappedMs / MS_PER_SECOND);
+      movePlayheadTo(wrappedMs);
       showFrameAt(wrappedMs);
-      audio?.playFrom(wrappedMs);
     }, intervalMs);
 
     const quit = (): void => {
@@ -220,7 +257,10 @@ export const runFallbackPlayer = ({
         if (key === KEY_SPACE) {
           playing = !playing;
           if (playing) {
-            audio?.playFrom(elapsedMs);
+            // While the gate holds, the gate-clear owns the audio start
+            if (!waiting) {
+              audio?.playFrom(elapsedMs);
+            }
           } else {
             audio?.pause();
           }

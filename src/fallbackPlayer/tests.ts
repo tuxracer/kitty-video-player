@@ -266,7 +266,8 @@ describe('runFallbackPlayer', () => {
     const state = setup();
     state.keys.press(KEY_ARROW_RIGHT + KEY_ARROW_RIGHT);
     await vi.advanceTimersByTimeAsync(0);
-    expect(state.source.seeks).toEqual([5_000, 5_000]);
+    // The playhead moves synchronously on seek, so the presses accumulate
+    expect(state.source.seeks).toEqual([5_000, 10_000]);
     await quit(state);
   });
 
@@ -313,6 +314,46 @@ describe('runFallbackPlayer', () => {
     await done;
   });
 
+  it('holds the clock and audio until the source delivers the first frame', async () => {
+    const screen = createFakeScreen();
+    const keys = createFakeInput();
+    const audio = createFakeAudio();
+    let ready = false;
+    const requestedMs: number[] = [];
+    const frame = new Uint8Array(INFO.width * INFO.height * 3);
+    const source: FrameSource = {
+      open: () => Promise.resolve(INFO),
+      getFrameAt: (timeMs) => {
+        requestedMs.push(timeMs);
+        return Promise.resolve(ready ? frame : null);
+      },
+      seek: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+    };
+    const done = runFallbackPlayer({
+      screen: screen.screen,
+      source,
+      info: INFO,
+      input: keys.input,
+      audio: audio.audio,
+    });
+    await vi.advanceTimersByTimeAsync(TICK_MS * 5);
+    // Every tick retried time zero: nothing painted, nothing advanced,
+    // audio never started
+    expect(requestedMs.length).toBeGreaterThan(1);
+    expect(requestedMs.every((ms) => ms === 0)).toBe(true);
+    expect(screen.pushedFrames).toEqual([]);
+    expect(audio.playFroms).toEqual([]);
+    ready = true;
+    await vi.advanceTimersByTimeAsync(TICK_MS * 2);
+    // The gate cleared at zero: audio started there and the clock advanced
+    expect(audio.playFroms[0]).toBe(0);
+    expect(requestedMs).toContain(TICK_MS);
+    keys.press('q');
+    await vi.advanceTimersByTimeAsync(0);
+    await done;
+  });
+
   it('clamps a forward seek at the stream duration', async () => {
     const state = setup();
     // Settle the initial frame fetch first, otherwise the first press's
@@ -337,9 +378,19 @@ describe('runFallbackPlayer', () => {
 });
 
 describe('runFallbackPlayer audio', () => {
-  it('starts audio at zero and closes it on quit', async () => {
+  // Audio starts when the gated frame paints, a microtask chain behind the
+  // triggering call, so one macrotask settles it (this describe block runs
+  // under real timers).
+  const settleGate = async (): Promise<void> =>
+    new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+
+  it('starts audio at zero once the first frame paints, and closes it on quit', async () => {
     const audio = createFakeAudio();
     const state = setup(audio);
+    expect(audio.playFroms).toEqual([]);
+    await settleGate();
     expect(audio.playFroms[0]).toBe(0);
     await quit(state);
     expect(audio.closeCalls).toBe(1);
@@ -348,6 +399,7 @@ describe('runFallbackPlayer audio', () => {
   it('pauses audio on space and resumes from the playhead', async () => {
     const audio = createFakeAudio();
     const state = setup(audio);
+    await settleGate();
     state.keys.press(' ');
     expect(audio.pauseCalls).toBe(1);
     const playsBefore = audio.playFroms.length;
@@ -359,11 +411,17 @@ describe('runFallbackPlayer audio', () => {
   it('restarts audio at the seek target while playing but not while paused', async () => {
     const audio = createFakeAudio();
     const state = setup(audio);
+    // Settle the initial frame fetch first, otherwise the press's post-seek
+    // frame refresh is skipped by the in-flight guard and the audio restart
+    // waits for the next interval retry instead
+    await settleGate();
     state.keys.press(KEY_ARROW_RIGHT);
+    await settleGate();
     expect(audio.playFroms.at(-1)).toBe(5_000);
     state.keys.press(' ');
     const playsBefore = audio.playFroms.length;
     state.keys.press(KEY_ARROW_RIGHT);
+    await settleGate();
     expect(audio.playFroms.length).toBe(playsBefore);
     await quit(state);
   });

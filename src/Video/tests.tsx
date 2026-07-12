@@ -852,6 +852,109 @@ describe('Video audio wiring', () => {
   });
 });
 
+describe('Video buffering gate', () => {
+  const INFO: FrameSourceInfo = {
+    width: 8,
+    height: 4,
+    colorSpace: 'rgb24',
+    durationMs: 20_000,
+    fps: 30,
+  };
+
+  interface StallingSourceHarness {
+    source: FrameSource;
+    setReady: (ready: boolean) => void;
+  }
+
+  /** Returns null frames until the test marks it ready, like a remote decoder still buffering */
+  const createStallingSource = (): StallingSourceHarness => {
+    let ready = false;
+    const frame = new Uint8Array(INFO.width * INFO.height * 3);
+    return {
+      setReady: (value) => {
+        ready = value;
+      },
+      source: {
+        open: () => Promise.resolve(INFO),
+        getFrameAt: () => Promise.resolve(ready ? frame : null),
+        seek: () => Promise.resolve(),
+        close: () => Promise.resolve(),
+      },
+    };
+  };
+
+  it('holds the playhead and audio until the first frame arrives', async () => {
+    const harness = createFakeScreen();
+    const stalling = createStallingSource();
+    const audio = createFakeAudio();
+    const ref = createRef<VideoRef>();
+    const { unmount } = render(
+      <Video
+        ref={ref}
+        screen={harness.screen}
+        source={stalling.source}
+        info={INFO}
+        audio={audio.audio}
+        autoPlay
+      />,
+    );
+    // Several 33 ms ticks pass with no frame available
+    await delay(150);
+    await flush();
+    expect(ref.current?.currentTime).toBe(0);
+    expect(harness.pushedFrames).toEqual([]);
+    expect(audio.playFroms).toEqual([]);
+
+    stalling.setReady(true);
+    await delay(150);
+    await flush();
+    expect(audio.playFroms[0]).toBe(0);
+    expect(ref.current?.currentTime).toBeGreaterThan(0);
+    expect(harness.pushedFrames.length).toBeGreaterThan(0);
+    unmount();
+  });
+
+  it('holds the playhead at the seek target and defers the audio restart until its frame arrives', async () => {
+    const harness = createFakeScreen();
+    const stalling = createStallingSource();
+    stalling.setReady(true);
+    const audio = createFakeAudio();
+    const ref = createRef<VideoRef>();
+    const { unmount } = render(
+      <Video
+        ref={ref}
+        screen={harness.screen}
+        source={stalling.source}
+        info={INFO}
+        audio={audio.audio}
+        autoPlay
+      />,
+    );
+    await flush();
+    expect(audio.playFroms[0]).toBe(0);
+
+    // The frame at the seek target is unavailable: the playhead jumps to
+    // the target synchronously, then holds there, and audio does not
+    // restart yet
+    stalling.setReady(false);
+    if (ref.current) {
+      ref.current.currentTime = 5;
+    }
+    expect(ref.current?.currentTime).toBe(5);
+    await delay(150);
+    await flush();
+    expect(ref.current?.currentTime).toBe(5);
+    expect(audio.playFroms).not.toContain(5_000);
+
+    stalling.setReady(true);
+    await delay(150);
+    await flush();
+    expect(audio.playFroms.at(-1)).toBe(5_000);
+    expect(ref.current?.currentTime).toBeGreaterThan(5);
+    unmount();
+  });
+});
+
 describe('Video mute', () => {
   it('applies the initial muted prop to the audio player', async () => {
     const { harness, source, info } = await setup();

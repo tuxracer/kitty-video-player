@@ -11,6 +11,14 @@ import type { PlaybackClock, PlaybackClockOptions } from './types.ts';
  * source, and React state (so an Ink redraw) updates only when the displayed
  * whole second changes. Resources may be null (self-managed mode before the
  * source opens), in which case the clock idles.
+ *
+ * A buffering gate holds the clock at startup, after seeks, loop wraps, and
+ * replays: the playhead does not advance (and audio does not start) until
+ * the source delivers the frame at the gated position. Remote URLs take
+ * seconds to produce their first frame, and without the gate the bar runs
+ * ahead and the skipped content is never shown. Once playback is underway a
+ * null frame still advances the clock (frames drop, playback stays
+ * realtime).
  */
 export const usePlaybackClock = ({
   screen,
@@ -52,11 +60,17 @@ export const usePlaybackClock = ({
   // handler can synchronously re-enter the clock and flip the ref.
   const readPlaying = useCallback((): boolean => playingRef.current, []);
 
-  // Bumped whenever the playhead is reset outside a frame fetch (replay
-  // after ended, source change). A fetch that started on the old timeline
-  // still paints its frame, but must not write its timestamp back into
-  // elapsedRef and clobber the reset.
+  // Bumped whenever the playhead is reset outside a frame fetch (seek,
+  // replay after ended, loop wrap, source change). A fetch that started on
+  // the old timeline still paints its frame, but must not write its
+  // timestamp back into elapsedRef and clobber the reset.
   const timelineRef = useRef(0);
+
+  // The buffering gate. True until the source delivers the frame at the
+  // current playhead: at startup, after seeks, loop wraps, replays, and
+  // source changes. While gated the interval retries the same position
+  // instead of advancing, and audio starts only when the gate clears.
+  const waitingRef = useRef(true);
 
   const noteSourceError = useCallback(
     (error: unknown): void => {
@@ -86,11 +100,23 @@ export const usePlaybackClock = ({
             screen.pushFrame(frame);
           }
           if (timelineRef.current !== timeline) {
-            // A playhead reset superseded this fetch (replay after ended,
-            // source change), keep the new position. The pushFrame above is
-            // deliberately not skipped: painting the already-fetched frame
-            // is harmless and the reset's own fetch repaints right after.
+            // A playhead reset superseded this fetch (seek, replay after
+            // ended, source change), keep the new position. The pushFrame
+            // above is deliberately not skipped: painting the already-fetched
+            // frame is harmless and the reset's own fetch repaints right after.
             return;
+          }
+          if (waitingRef.current) {
+            if (!frame) {
+              // Still buffering: hold the playhead until the frame lands
+              return;
+            }
+            waitingRef.current = false;
+            // Audio was deferred while the gate held, start it at the
+            // position the picture actually resumed from
+            if (readPlaying()) {
+              audioRef.current?.playFrom(nextMs);
+            }
           }
           const previousSecond = Math.floor(elapsedRef.current / MS_PER_SECOND);
           const nextSecond = Math.floor(nextMs / MS_PER_SECOND);
@@ -119,7 +145,7 @@ export const usePlaybackClock = ({
           inFlightRef.current = false;
         });
     },
-    [info, noteSourceError, screen, source],
+    [info, noteSourceError, readPlaying, screen, source],
   );
 
   const pause = useCallback((): void => {
@@ -141,9 +167,12 @@ export const usePlaybackClock = ({
       // HTML5 semantics: play() after ended restarts from the beginning.
       // The timeline bump keeps the ended branch's still-in-flight final
       // frame paint from writing durationMs back over the reset playhead.
+      // The replay is a backward jump that respawns the decoder, so the
+      // gate holds until the first frame is back.
       endedRef.current = false;
       setEnded(false);
       timelineRef.current += 1;
+      waitingRef.current = true;
       elapsedRef.current = 0;
       setElapsedMs(0);
     }
@@ -154,8 +183,9 @@ export const usePlaybackClock = ({
     setPlaying(true);
     callbacksRef.current.onPlay?.();
     // Re-check: an onPlay handler may synchronously re-enter the clock
-    // (e.g. call pause()), and then audio must not start afterward.
-    if (readPlaying()) {
+    // (e.g. call pause()), and then audio must not start afterward. While
+    // the gate holds, the gate-clear owns the audio start instead.
+    if (readPlaying() && !waitingRef.current) {
       audioRef.current?.playFrom(elapsedRef.current);
     }
   }, [readPlaying]);
@@ -168,10 +198,37 @@ export const usePlaybackClock = ({
     }
   }, [pause, play]);
 
+  // Synchronous playhead move shared by seeks and loop wraps. Bumps the
+  // timeline so an in-flight fetch from the old position cannot write its
+  // timestamp over the new one, gates the clock on the frame at the target,
+  // and mirrors HTML5 by reporting the jump immediately instead of when
+  // that frame lands.
+  const movePlayheadTo = useCallback(
+    (targetMs: number): void => {
+      if (info === null) {
+        return;
+      }
+      timelineRef.current += 1;
+      waitingRef.current = true;
+      const previousSecond = Math.floor(elapsedRef.current / MS_PER_SECOND);
+      const nextSecond = Math.floor(targetMs / MS_PER_SECOND);
+      elapsedRef.current = targetMs;
+      if (nextSecond !== previousSecond) {
+        setElapsedMs(targetMs);
+        callbacksRef.current.onTimeUpdate?.({
+          currentTime: targetMs / MS_PER_SECOND,
+          duration: info.durationMs / MS_PER_SECOND,
+        });
+      }
+    },
+    [info],
+  );
+
   // A new source starts from zero (src/srcObject changes in managed mode).
   // Runs harmlessly on first mount, everything is already zero.
   useEffect(() => {
     timelineRef.current += 1;
+    waitingRef.current = true;
     elapsedRef.current = 0;
     setElapsedMs(0);
     endedRef.current = false;
@@ -185,7 +242,9 @@ export const usePlaybackClock = ({
       return;
     }
     showFrameAt(elapsedRef.current);
-    if (playingRef.current) {
+    // On a mid-playback effect re-run audio restarts right away. Behind the
+    // gate (startup, source change) the gate-clear starts it instead.
+    if (playingRef.current && !waitingRef.current) {
       audioRef.current?.playFrom(elapsedRef.current);
     }
     const intervalMs = Math.round(MS_PER_SECOND / info.fps);
@@ -194,14 +253,24 @@ export const usePlaybackClock = ({
         return;
       }
       const nextMs = elapsedRef.current + intervalMs;
+      if (waitingRef.current && nextMs < info.durationMs) {
+        // Buffering: retry the gated position instead of advancing. At the
+        // end of the stream this falls through so a gated playhead parked
+        // there still reaches the loop/ended handling below.
+        showFrameAt(elapsedRef.current);
+        return;
+      }
       if (nextMs < info.durationMs) {
         showFrameAt(nextMs);
         return;
       }
       if (loop) {
+        // The wrap is a backward jump that respawns the decoder, so it
+        // moves the playhead synchronously and gates like a seek. Audio
+        // restarts when the wrapped frame paints.
         const wrappedMs = nextMs % info.durationMs;
+        movePlayheadTo(wrappedMs);
         showFrameAt(wrappedMs);
-        audioRef.current?.playFrom(wrappedMs);
         return;
       }
       // End of stream: park on the final frame, stop, and report. Elapsed
@@ -230,7 +299,7 @@ export const usePlaybackClock = ({
       clearInterval(interval);
       audioRef.current?.pause();
     };
-  }, [info, loop, readPlaying, screen, showFrameAt, source]);
+  }, [info, loop, movePlayheadTo, readPlaying, screen, showFrameAt, source]);
 
   const seekToMs = useCallback(
     (targetMs: number): void => {
@@ -240,9 +309,10 @@ export const usePlaybackClock = ({
       const clampedMs = Math.min(Math.max(targetMs, 0), info.durationMs);
       endedRef.current = false;
       setEnded(false);
-      if (playingRef.current) {
-        audioRef.current?.playFrom(clampedMs);
-      }
+      // Audio deliberately does not restart here: the gate starts it at the
+      // target once the sought frame paints, keeping sound and picture
+      // aligned when the source needs time to reposition.
+      movePlayheadTo(clampedMs);
       void source
         .seek(clampedMs)
         .then(() => {
@@ -250,7 +320,7 @@ export const usePlaybackClock = ({
         })
         .catch(noteSourceError);
     },
-    [info, noteSourceError, showFrameAt, source],
+    [info, movePlayheadTo, noteSourceError, showFrameAt, source],
   );
 
   const getElapsedMs = useCallback((): number => elapsedRef.current, []);

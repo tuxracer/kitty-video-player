@@ -91,9 +91,21 @@ the video, so the picture participates in Ink layout like any other text.
 - React state (and therefore an Ink redraw) updates only when the displayed
   whole second changes. Ink redraws roughly once per second, for the time
   readout and progress bar.
+- A buffering gate holds the clock at startup, after seeks, loop wraps, and
+  replays. The playhead does not advance (and audio does not start) until
+  the source delivers the frame at the gated position, and the interval
+  retries that position each tick. Remote URLs take seconds to produce
+  their first frame, and without the gate the bar runs ahead while the
+  skipped content is never shown. Once playback is underway a null frame
+  still advances the clock, so frames drop and playback stays realtime.
+  Seeks and wraps move the playhead synchronously (the bar tracks the jump
+  immediately, HTML5-style) and bump a timeline counter so a frame fetch
+  from the old position cannot write its timestamp over the new one.
 
 The clock also drives an optional `AudioPlayer`. `playFrom` and `pause` fire
-at the same transitions as the video (play, pause, seek, loop wrap). The
+at the same transitions as the video (play, pause, seek, loop wrap), with
+seek, wrap, and startup restarts deferred through the buffering gate so the
+sound starts where the picture actually resumed. The
 video clock stays master. Once per displayed second it compares the audio
 player's reported position against its own elapsed time and calls `playFrom`
 again if they have drifted more than `DRIFT_RESYNC_THRESHOLD_MS` (250 ms)
