@@ -1,5 +1,5 @@
 import { detectCellRenderMode, detectKittyGraphicsSupport, Screen } from 'kitty-motion';
-import type { CellRenderMode, RenderMode } from 'kitty-motion';
+import type { RenderMode } from 'kitty-motion';
 
 import type { FrameSourceInfo } from '../frameSource/index.ts';
 import { SEEK_STEP_MS } from '../Video/index.tsx';
@@ -40,26 +40,24 @@ export const resolveFallbackRenderMode = async (
 
 /**
  * Construct the fallback Screen synchronously and probe-free, the same trick
- * as the Video module's managedScreen. The render mode is always passed
- * explicitly because probe-free construction with an undefined renderMode
- * would select the kitty renderer. When no mode is forced, kitty-motion's
- * detectCellRenderMode picks it (cell-background on Terminal.app, whose
- * baseline-anchored block glyphs break half-block, and half-block everywhere
- * else). fileTransfer false and dirtyRects false skip the remaining probes.
- * Runs in full-screen destructive mode, so kitty-motion clears the screen,
- * fits and centers the frame, follows terminal resizes via autoResize, and
- * restores the terminal on dispose.
+ * as the Video module's managedScreen. The caller resolves the render mode
+ * first (resolveFallbackRenderMode), so the Screen never sees undefined,
+ * which matters because probe-free construction with an undefined renderMode
+ * would follow a probe cache that selects kitty. The mode may be kitty
+ * itself (full quality at the default cursor placement, for terminals like
+ * iTerm2 with graphics but no placeholders) or a cell mode. fileTransfer
+ * false and dirtyRects false skip the remaining probes. Runs in full-screen
+ * destructive mode, so kitty-motion clears the screen, fits and centers the
+ * frame, follows terminal resizes via autoResize, and restores the terminal
+ * on dispose.
  */
-export const createFallbackScreen = (
-  info: FrameSourceInfo,
-  renderMode?: CellRenderMode,
-): Screen =>
+export const createFallbackScreen = (info: FrameSourceInfo, renderMode: RenderMode): Screen =>
   new Screen({
     output: process.stdout,
     sourceWidth: info.width,
     sourceHeight: info.height,
     colorSpace: info.colorSpace,
-    renderMode: renderMode ?? detectCellRenderMode(),
+    renderMode,
     fileTransfer: false,
     dirtyRects: false,
     embedded: false,

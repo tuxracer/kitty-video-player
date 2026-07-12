@@ -33,14 +33,16 @@ Usage:
 Options:
   -h, --help              print this help and exit
   -v, --version           print the version and exit
-      --fallback          play with the fallback cell renderer instead of
-                          kitty graphics (works on any terminal and inside
-                          tmux or screen, reduced quality, no on-screen UI)
+      --fallback          play without the Ink UI using the best available
+                          renderer (kitty graphics without controls when
+                          the terminal supports them, otherwise a cell
+                          renderer)
       --render-mode <mode>
                           force a render mode: kitty, half-block,
-                          cell-background, emoji, or ascii. kitty forces the
-                          full player even when detection says unsupported,
-                          cell modes force the fallback player
+                          cell-background, emoji, or ascii. kitty alone
+                          forces the full player, cell modes force the
+                          fallback player, and --fallback --render-mode
+                          kitty forces kitty graphics without controls
 
 Controls:
   space                   play or pause
@@ -50,8 +52,10 @@ Controls:
 
 The full player requires an interactive Kitty or Ghostty terminal (Kitty
 graphics protocol with Unicode placeholder support) outside tmux/screen.
-On other terminals kitty-player offers to play with a fallback cell
-renderer (cell-background on Terminal.app, half-block elsewhere).`;
+On other terminals kitty-player offers to play without on-screen controls,
+using kitty graphics when the terminal supports them (iTerm2 for example)
+or a fallback cell renderer (cell-background on Terminal.app, half-block
+elsewhere).`;
 
 /** Printed to stderr when stdout is not an interactive terminal */
 export const UNSUPPORTED_TERMINAL_MESSAGE =

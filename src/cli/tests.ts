@@ -71,7 +71,7 @@ describe('parseCliArgs', () => {
     }
   });
 
-  it('parses --fallback with --render-mode kitty (the gate owns the conflict)', () => {
+  it('parses --fallback with --render-mode kitty (the gate resolves the combination to kitty without controls)', () => {
     expect(parseCliArgs(['--fallback', '--render-mode', 'kitty'])).toEqual({
       action: 'play',
       fallback: true,

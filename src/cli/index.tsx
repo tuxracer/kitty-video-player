@@ -9,9 +9,10 @@
  */
 import { render } from 'ink';
 import { createScreen } from 'kitty-motion';
+import type { RenderMode } from 'kitty-motion';
 
 import { createFfmpegSource, isFfmpegSourceError } from '../ffmpegSource/index.ts';
-import { createFallbackScreen, runFallbackPlayer } from '../fallbackPlayer/index.ts';
+import { createFallbackScreen, resolveFallbackRenderMode, runFallbackPlayer } from '../fallbackPlayer/index.ts';
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
 import { Video } from '../Video/index.tsx';
 import { computePanelRegion } from '../playerLayout/index.ts';
@@ -20,7 +21,9 @@ import { confirmFallback } from './confirmFallback.ts';
 import {
   EXIT_OK,
   EXIT_USAGE,
+  FALLBACK_KITTY_NOTE,
   FALLBACK_PROMPT,
+  FALLBACK_PROMPT_KITTY,
   FALLBACK_REASON_MESSAGES,
   FALLBACK_WARNING_HEADER,
   HELP_TEXT,
@@ -60,30 +63,34 @@ if (!process.stdout.isTTY) {
   process.exit(EXIT_OK);
 }
 
-// --render-mode kitty forces the full player, --fallback forces the cell
-// renderer. Asking for both at once is contradictory.
-if (args.fallback && args.renderMode === 'kitty') {
-  process.stderr.write(
-    `kitty-player: --fallback conflicts with --render-mode kitty\n\n${HELP_TEXT}\n`,
-  );
-  process.exit(EXIT_USAGE);
-}
-
-// The kitty-graphics player needs placeholder support outside a multiplexer.
-// When it cannot run, offer fallback mode. --fallback skips both the
-// detection and the prompt (it also forces fallback on a supported
-// terminal, doubling as a test path). --render-mode kitty forces the full
-// player past detection. Any other --render-mode implies fallback, since a
-// cell mode has no meaning in the Ink player. This all happens before any
-// Screen or Ink render exists, so the prompt can read stdin in cooked mode.
-const forceKitty = args.renderMode === 'kitty';
+// --render-mode kitty alone forces the full Ink player past detection.
+// --fallback or a cell --render-mode forces the fallback player, and
+// --fallback --render-mode kitty forces the fallback player with the kitty
+// renderer (full quality, no on-screen UI, for terminals like iTerm2 that
+// have graphics but no placeholders). Plain --fallback probes for the best
+// available mode. This all happens before any Screen or Ink render exists,
+// so the prompt and the graphics probe can read stdin freely.
+const forceKitty = args.renderMode === 'kitty' && !args.fallback;
 let fallback = args.fallback || (args.renderMode !== undefined && !forceKitty);
-if (!fallback && !forceKitty) {
+let fallbackMode: RenderMode | undefined;
+if (fallback) {
+  fallbackMode = await resolveFallbackRenderMode(args.renderMode);
+} else if (!forceKitty) {
   const reasons = detectFallbackReasons();
   if (reasons.length > 0) {
+    // Resolve before prompting because the wording depends on whether
+    // kitty graphics work here without placeholders.
+    fallbackMode = await resolveFallbackRenderMode();
     const reasonLines = reasons.map((reason) => `  - ${FALLBACK_REASON_MESSAGES[reason]}`);
     process.stderr.write(`${FALLBACK_WARNING_HEADER}\n${reasonLines.join('\n')}\n`);
-    fallback = await confirmFallback({ input: process.stdin, output: process.stderr, prompt: FALLBACK_PROMPT });
+    if (fallbackMode === 'kitty') {
+      process.stderr.write(`${FALLBACK_KITTY_NOTE}\n`);
+    }
+    fallback = await confirmFallback({
+      input: process.stdin,
+      output: process.stderr,
+      prompt: fallbackMode === 'kitty' ? FALLBACK_PROMPT_KITTY : FALLBACK_PROMPT,
+    });
     if (!fallback) {
       process.exit(EXIT_OK);
     }
@@ -102,14 +109,12 @@ try {
   process.exit(EXIT_USAGE);
 }
 
-// Fallback mode never touches Ink. The cell renderer owns the whole
-// screen and produces no placeholder rows to lay out. The playback loop
-// resolves when the user quits, with the screen disposed and source closed.
-if (fallback) {
-  const fallbackScreen = createFallbackScreen(
-    info,
-    args.renderMode === 'kitty' ? undefined : args.renderMode,
-  );
+// Fallback mode never touches Ink. The renderer owns the whole screen
+// (kitty at full quality or a cell renderer) and produces no placeholder
+// rows to lay out. The playback loop resolves when the user quits, with
+// the screen disposed and source closed.
+if (fallbackMode !== undefined) {
+  const fallbackScreen = createFallbackScreen(info, fallbackMode);
   await runFallbackPlayer({
     screen: fallbackScreen,
     source,

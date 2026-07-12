@@ -7,12 +7,15 @@ A terminal video player. The UI (title, progress bar, controls) is an [Ink](http
 - Node.js >= 24
 - An interactive Kitty or Ghostty terminal (Kitty graphics protocol with
   Unicode placeholder support) outside tmux or GNU screen. On other
-  interactive terminals kitty-player offers to play with a fallback cell
-  renderer instead (cell-background on Terminal.app, half-block elsewhere,
-  reduced quality, keys work, no on-screen UI). `--fallback` selects the
-  fallback directly, and `--render-mode` forces a specific mode in either
-  direction, including `kitty` to bypass detection. When stdout is not a
-  TTY it prints a notice and exits without drawing
+  interactive terminals kitty-player offers to play without on-screen
+  controls, using kitty graphics when the terminal supports them (iTerm2
+  for example) or a fallback cell renderer otherwise (cell-background on
+  Terminal.app, half-block elsewhere, keys still work). `--fallback`
+  selects the best available renderer directly, and `--render-mode` forces
+  a specific mode. `kitty` alone bypasses detection for the full player, a
+  cell mode forces the fallback player, and `--fallback --render-mode
+  kitty` forces the kitty-without-controls tier. When stdout is not a TTY
+  it prints a notice and exits without drawing
 - ffmpeg is bundled (via ffmpeg-static and ffprobe-static), no system install needed
 
 ## Install and run
@@ -53,13 +56,13 @@ a hue-cycling ball moving on a Lissajous path over a 20 second loop.
 
 ## CLI flags
 
-| Flag                   | Action                                                                                                                                        |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<file>`               | play this video file (optional, plays the built-in demo when omitted)                                                                         |
-| `-h`, `--help`         | print help and exit                                                                                                                           |
-| `-v`, `--version`      | print the version and exit                                                                                                                    |
-| `--fallback`           | play with the fallback cell renderer instead of kitty graphics (works on any terminal and inside tmux or screen, no on-screen UI)             |
-| `--render-mode <mode>` | force a render mode: kitty, half-block, cell-background, emoji, or ascii (kitty forces the full player, cell modes force the fallback player) |
+| Flag                   | Action                                                                                                                                                                                                                           |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<file>`               | play this video file (optional, plays the built-in demo when omitted)                                                                                                                                                            |
+| `-h`, `--help`         | print help and exit                                                                                                                                                                                                              |
+| `-v`, `--version`      | print the version and exit                                                                                                                                                                                                       |
+| `--fallback`           | play without the Ink UI using the best available renderer (kitty graphics without controls when supported, otherwise a cell renderer)                                                                                            |
+| `--render-mode <mode>` | force a render mode: kitty, half-block, cell-background, emoji, or ascii (kitty alone forces the full player, cell modes force the fallback player, and `--fallback --render-mode kitty` forces kitty graphics without controls) |
 
 ## How it works
 
