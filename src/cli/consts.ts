@@ -72,5 +72,13 @@ export const FALLBACK_REASON_MESSAGES: Record<FallbackReason, string> = {
 export const FALLBACK_PROMPT =
   'Continue in fallback mode (reduced quality, no on-screen UI)? [y/N] ';
 
+/** The [y/N] question used when the fallback can use full-quality kitty graphics */
+export const FALLBACK_PROMPT_KITTY =
+  'Continue with kitty graphics (full quality, no on-screen UI)? [y/N] ';
+
+/** Extra line after the reason lines when kitty graphics work but placeholders do not */
+export const FALLBACK_KITTY_NOTE =
+  'kitty graphics work here, but without Unicode placeholder support the on-screen controls cannot be drawn';
+
 /** Answers that accept the fallback prompt, compared trimmed and lowercased */
 export const FALLBACK_YES_ANSWERS: readonly string[] = ['y', 'yes'];

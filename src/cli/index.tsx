@@ -20,6 +20,7 @@ import { confirmFallback } from './confirmFallback.ts';
 import {
   EXIT_OK,
   EXIT_USAGE,
+  FALLBACK_PROMPT,
   FALLBACK_REASON_MESSAGES,
   FALLBACK_WARNING_HEADER,
   HELP_TEXT,
@@ -82,7 +83,7 @@ if (!fallback && !forceKitty) {
   if (reasons.length > 0) {
     const reasonLines = reasons.map((reason) => `  - ${FALLBACK_REASON_MESSAGES[reason]}`);
     process.stderr.write(`${FALLBACK_WARNING_HEADER}\n${reasonLines.join('\n')}\n`);
-    fallback = await confirmFallback({ input: process.stdin, output: process.stderr });
+    fallback = await confirmFallback({ input: process.stdin, output: process.stderr, prompt: FALLBACK_PROMPT });
     if (!fallback) {
       process.exit(EXIT_OK);
     }

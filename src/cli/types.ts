@@ -45,4 +45,6 @@ export interface ConfirmFallbackOptions {
   input: NodeJS.ReadableStream;
   /** Where the prompt text is written */
   output: NodeJS.WritableStream;
+  /** The [y/N] question text written to output before reading the answer */
+  prompt: string;
 }

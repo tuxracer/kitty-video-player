@@ -147,10 +147,10 @@ describe('detectFallbackReasons', () => {
 
 describe('confirmFallback', () => {
   /** Run confirmFallback against fake streams, feeding one answer line (or EOF when undefined) */
-  const ask = async (answer?: string): Promise<{ accepted: boolean; prompted: string }> => {
+  const ask = async (answer?: string, prompt: string = FALLBACK_PROMPT): Promise<{ accepted: boolean; prompted: string }> => {
     const input = new PassThrough();
     const output = new PassThrough();
-    const pending = confirmFallback({ input, output });
+    const pending = confirmFallback({ input, output, prompt });
     if (answer === undefined) {
       input.end();
     } else {
@@ -161,9 +161,13 @@ describe('confirmFallback', () => {
     return { accepted, prompted };
   };
 
-  it('writes the prompt to the output stream', async () => {
-    const { prompted } = await ask('n\n');
-    expect(prompted).toBe(FALLBACK_PROMPT);
+  it('writes the provided prompt to the output stream', async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const pending = confirmFallback({ input, output, prompt: 'Play anyway? [y/N] ' });
+    input.write('n\n');
+    await pending;
+    expect(String(output.read() ?? '')).toBe('Play anyway? [y/N] ');
   });
 
   it.each(['y\n', 'Y\n', 'yes\n', ' YES \n'])('accepts %j', async (answer) => {
@@ -184,7 +188,7 @@ describe('confirmFallback', () => {
   it('declines when the input stream errors', async () => {
     const input = new PassThrough();
     const output = new PassThrough();
-    const pending = confirmFallback({ input, output });
+    const pending = confirmFallback({ input, output, prompt: FALLBACK_PROMPT });
     input.emit('error', new Error('boom'));
     await expect(pending).resolves.toBe(false);
   });

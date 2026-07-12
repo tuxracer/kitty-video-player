@@ -1,4 +1,13 @@
+import type { CellRenderMode } from 'kitty-motion';
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
+
+/** Injectable detection seams for resolveFallbackRenderMode, defaulted to kitty-motion's detectors */
+export interface ResolveFallbackRenderModeOptions {
+  /** Async kitty graphics probe (detectKittyGraphicsSupport in production) */
+  probeKittyGraphics?: () => Promise<boolean>;
+  /** Cell mode chooser (detectCellRenderMode in production) */
+  detectCellMode?: () => CellRenderMode;
+}
 
 /**
  * Structural subset of kitty-motion's Screen that the fallback player uses,

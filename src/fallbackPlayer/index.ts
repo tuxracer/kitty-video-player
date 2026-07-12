@@ -1,5 +1,5 @@
-import { Screen, detectCellRenderMode } from 'kitty-motion';
-import type { CellRenderMode } from 'kitty-motion';
+import { detectCellRenderMode, detectKittyGraphicsSupport, Screen } from 'kitty-motion';
+import type { CellRenderMode, RenderMode } from 'kitty-motion';
 
 import type { FrameSourceInfo } from '../frameSource/index.ts';
 import { SEEK_STEP_MS } from '../Video/index.tsx';
@@ -11,10 +11,32 @@ import {
   KEY_SPACE,
   MS_PER_SECOND,
 } from './consts.ts';
-import type { FallbackPlayerOptions } from './types.ts';
+import type { FallbackPlayerOptions, ResolveFallbackRenderModeOptions } from './types.ts';
 
 export * from './consts.ts';
 export * from './types.ts';
+
+/**
+ * Pick the fallback player's render mode. A forced mode wins untouched.
+ * Otherwise the kitty graphics probe decides. Terminals like iTerm2
+ * implement the graphics protocol without Unicode placeholders, so they get
+ * full-quality kitty rendering (only the Ink controls need placeholders).
+ * When the probe fails the auto-detected cell mode is used (cell-background
+ * on Terminal.app, half-block elsewhere). The probe reads stdin, so this
+ * must run before Ink takes stdin over.
+ */
+export const resolveFallbackRenderMode = async (
+  forced?: RenderMode,
+  {
+    probeKittyGraphics = detectKittyGraphicsSupport,
+    detectCellMode = detectCellRenderMode,
+  }: ResolveFallbackRenderModeOptions = {},
+): Promise<RenderMode> => {
+  if (forced !== undefined) {
+    return forced;
+  }
+  return (await probeKittyGraphics()) ? 'kitty' : detectCellMode();
+};
 
 /**
  * Construct the fallback Screen synchronously and probe-free, the same trick

@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
-import { KEY_ARROW_LEFT, KEY_ARROW_RIGHT, runFallbackPlayer } from './index.ts';
+import { KEY_ARROW_LEFT, KEY_ARROW_RIGHT, resolveFallbackRenderMode, runFallbackPlayer } from './index.ts';
 import type { FallbackKeyInput, FallbackScreen } from './index.ts';
 
 const INFO: FrameSourceInfo = {
@@ -287,5 +287,41 @@ describe('runFallbackPlayer', () => {
     // The third target is 15_000, past the 10_000 ms duration
     expect(state.source.seeks).toEqual([5_000, 10_000, 10_000]);
     await quit(state);
+  });
+});
+
+describe('resolveFallbackRenderMode', () => {
+  it('returns a forced mode without probing', async () => {
+    const probeKittyGraphics = vi.fn(() => Promise.resolve(true));
+    await expect(
+      resolveFallbackRenderMode('emoji', { probeKittyGraphics }),
+    ).resolves.toBe('emoji');
+    expect(probeKittyGraphics).not.toHaveBeenCalled();
+  });
+
+  it('returns a forced kitty mode without probing', async () => {
+    const probeKittyGraphics = vi.fn(() => Promise.resolve(false));
+    await expect(
+      resolveFallbackRenderMode('kitty', { probeKittyGraphics }),
+    ).resolves.toBe('kitty');
+    expect(probeKittyGraphics).not.toHaveBeenCalled();
+  });
+
+  it('resolves kitty when the graphics probe passes', async () => {
+    await expect(
+      resolveFallbackRenderMode(undefined, {
+        probeKittyGraphics: () => Promise.resolve(true),
+        detectCellMode: () => 'half-block',
+      }),
+    ).resolves.toBe('kitty');
+  });
+
+  it('resolves the detected cell mode when the probe fails', async () => {
+    await expect(
+      resolveFallbackRenderMode(undefined, {
+        probeKittyGraphics: () => Promise.resolve(false),
+        detectCellMode: () => 'cell-background',
+      }),
+    ).resolves.toBe('cell-background');
   });
 });
