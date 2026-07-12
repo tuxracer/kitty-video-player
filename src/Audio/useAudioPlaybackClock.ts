@@ -14,9 +14,9 @@ export const useAudioPlaybackClock = ({
   onEnded,
   onError,
 }: AudioPlaybackClockOptions): AudioPlaybackClock => {
-  const [playing, setPlaying] = useState(autoPlay);
+  const [, setPlaying] = useState(autoPlay);
   const [elapsedMs, setElapsedMs] = useState(0);
-  const [ended, setEnded] = useState(false);
+  const [, setEnded] = useState(false);
   const [buffering, setBuffering] = useState(false);
 
   const playingRef = useRef(autoPlay);
@@ -24,6 +24,7 @@ export const useAudioPlaybackClock = ({
   const endedRef = useRef(false);
   const waitingRef = useRef(false);
   const anchorRef = useRef({ wallMs: 0, elapsedMs: 0 });
+  const transportRevisionRef = useRef(0);
 
   const callbacksRef = useRef({ onTimeUpdate, onPlay, onPause, onEnded, onError });
   callbacksRef.current = { onTimeUpdate, onPlay, onPause, onEnded, onError };
@@ -73,32 +74,44 @@ export const useAudioPlaybackClock = ({
     if (!playingRef.current) {
       return;
     }
+    transportRevisionRef.current += 1;
+    const transportRevision = transportRevisionRef.current;
     playingRef.current = false;
     waitingRef.current = false;
     setPlaying(false);
     setBuffering(false);
     callbacksRef.current.onPause?.();
-    if (!readPlaying()) {
-      audioRef.current?.pause();
+    if (transportRevisionRef.current !== transportRevision) {
+      return;
     }
-  }, [readPlaying]);
+    audioRef.current?.pause();
+  }, []);
 
   const play = useCallback((): void => {
+    if (playingRef.current) {
+      return;
+    }
+    transportRevisionRef.current += 1;
+    const transportRevision = transportRevisionRef.current;
     if (endedRef.current) {
       endedRef.current = false;
       setEnded(false);
       setPlayhead(0, true);
-    }
-    if (playingRef.current) {
-      return;
+      if (transportRevisionRef.current !== transportRevision) {
+        return;
+      }
     }
     playingRef.current = true;
     setPlaying(true);
     callbacksRef.current.onPlay?.();
-    if (readPlaying() && audioRef.current !== null && durationRef.current !== null) {
+    if (
+      transportRevisionRef.current === transportRevision &&
+      audioRef.current !== null &&
+      durationRef.current !== null
+    ) {
       startAt(elapsedRef.current);
     }
-  }, [readPlaying, setPlayhead, startAt]);
+  }, [setPlayhead, startAt]);
 
   const togglePlay = useCallback((): void => {
     if (playingRef.current) {
@@ -114,10 +127,15 @@ export const useAudioPlaybackClock = ({
       if (currentDurationMs === null) {
         return;
       }
+      transportRevisionRef.current += 1;
+      const transportRevision = transportRevisionRef.current;
       const clampedMs = Math.min(Math.max(targetMs, 0), currentDurationMs);
       endedRef.current = false;
       setEnded(false);
       setPlayhead(clampedMs, true);
+      if (transportRevisionRef.current !== transportRevision) {
+        return;
+      }
       if (playingRef.current) {
         startAt(clampedMs);
       } else {
@@ -166,8 +184,9 @@ export const useAudioPlaybackClock = ({
       if (nextMs < currentDurationMs) {
         const previousSecond = Math.floor(elapsedRef.current / MS_PER_SECOND);
         const nextSecond = Math.floor(nextMs / MS_PER_SECOND);
+        const transportRevision = transportRevisionRef.current;
         setPlayhead(nextMs, nextSecond !== previousSecond);
-        if (!readPlaying()) {
+        if (transportRevisionRef.current !== transportRevision) {
           return;
         }
         if (nextSecond !== previousSecond) {
@@ -184,15 +203,20 @@ export const useAudioPlaybackClock = ({
 
       if (loopRef.current && currentDurationMs > 0) {
         const wrappedMs = nextMs % currentDurationMs;
+        const transportRevision = transportRevisionRef.current;
         setPlayhead(wrappedMs, true);
-        if (!readPlaying()) {
+        if (transportRevisionRef.current !== transportRevision) {
           return;
         }
         startAt(wrappedMs);
         return;
       }
 
+      const transportRevision = transportRevisionRef.current;
       setPlayhead(currentDurationMs, true);
+      if (transportRevisionRef.current !== transportRevision) {
+        return;
+      }
       playingRef.current = false;
       waitingRef.current = false;
       endedRef.current = true;
@@ -215,9 +239,13 @@ export const useAudioPlaybackClock = ({
   const getElapsedMs = useCallback((): number => elapsedRef.current, []);
 
   return {
-    playing,
+    get playing(): boolean {
+      return playingRef.current;
+    },
     elapsedMs,
-    ended,
+    get ended(): boolean {
+      return endedRef.current;
+    },
     buffering,
     play,
     pause,

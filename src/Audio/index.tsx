@@ -1,7 +1,7 @@
 import { ProgressBar, Spinner } from '@inkjs/ui';
 import { Box, Text, useApp, useInput } from 'ink';
 import type { ReactElement } from 'react';
-import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
 import { formatTime } from '../formatTime/index.ts';
 import {
@@ -42,12 +42,18 @@ export const Audio = forwardRef<AudioRef, AudioProps>((props, ref): ReactElement
     onEnded,
     onError,
   } = props;
-  const managed = useManagedResources({ src: props.src, onLoadedMetadata, onError });
+  const managed = useManagedResources({ src: props.src, onError });
   const [muted, setMuted] = useState(initialMuted);
+  const mutedRef = useRef(initialMuted);
+  const durationRef = useRef<number | null>(null);
+  const autoPlayRef = useRef(autoPlay);
+  autoPlayRef.current = autoPlay;
+  const metadataCallbackRef = useRef(onLoadedMetadata);
+  metadataCallbackRef.current = onLoadedMetadata;
   const clock = useAudioPlaybackClock({
     audio: managed.audio,
     durationMs: managed.durationMs,
-    autoPlay,
+    autoPlay: false,
     loop,
     onTimeUpdate,
     onPlay,
@@ -55,22 +61,44 @@ export const Audio = forwardRef<AudioRef, AudioProps>((props, ref): ReactElement
     onEnded,
     onError,
   });
+  durationRef.current = managed.durationMs;
+  const {
+    play: playClock,
+    pause: pauseClock,
+    seekToMs: seekClockToMs,
+    getElapsedMs,
+  } = clock;
+
+  const updateMuted = useCallback((value: boolean): void => {
+    mutedRef.current = value;
+    setMuted(value);
+  }, []);
 
   useEffect(() => managed.audio?.setMuted(muted), [managed.audio, muted]);
+  useEffect(() => updateMuted(initialMuted), [initialMuted, updateMuted]);
+  useEffect(() => {
+    if (managed.audio === null || managed.durationMs === null) {
+      return;
+    }
+    metadataCallbackRef.current?.({ duration: managed.durationMs / MS_PER_SECOND });
+    if (autoPlayRef.current) {
+      playClock();
+    }
+  }, [managed.audio, managed.durationMs, playClock]);
 
   useImperativeHandle(
     ref,
     () => ({
       play: (): Promise<void> => {
-        clock.play();
+        playClock();
         return Promise.resolve();
       },
-      pause: clock.pause,
+      pause: pauseClock,
       get currentTime(): number {
-        return clock.getElapsedMs() / MS_PER_SECOND;
+        return getElapsedMs() / MS_PER_SECOND;
       },
       set currentTime(seconds: number) {
-        clock.seekToMs(seconds * MS_PER_SECOND);
+        seekClockToMs(seconds * MS_PER_SECOND);
       },
       get paused(): boolean {
         return !clock.playing;
@@ -79,16 +107,16 @@ export const Audio = forwardRef<AudioRef, AudioProps>((props, ref): ReactElement
         return clock.ended;
       },
       get muted(): boolean {
-        return muted;
+        return mutedRef.current;
       },
       set muted(value: boolean) {
-        setMuted(value);
+        updateMuted(value);
       },
       get duration(): number {
-        return managed.durationMs === null ? Number.NaN : managed.durationMs / MS_PER_SECOND;
+        return durationRef.current === null ? Number.NaN : durationRef.current / MS_PER_SECOND;
       },
     }),
-    [clock, managed.durationMs, muted],
+    [clock, getElapsedMs, pauseClock, playClock, seekClockToMs, updateMuted],
   );
 
   const { exit } = useApp();
@@ -104,7 +132,7 @@ export const Audio = forwardRef<AudioRef, AudioProps>((props, ref): ReactElement
         return;
       }
       if (input === 'm') {
-        setMuted((value) => !value);
+        updateMuted(!mutedRef.current);
         return;
       }
       if (key.leftArrow) {
@@ -169,15 +197,16 @@ export const Audio = forwardRef<AudioRef, AudioProps>((props, ref): ReactElement
         <Box width={effectiveWidth}>
           <Text>{clock.playing ? PLAY_GLYPH : PAUSE_GLYPH} </Text>
           <Box width={progressWidth}>
-            <ProgressBar value={progressPercent} />
+            {showBuffering ? (
+              <Spinner
+                label={progressWidth >= BUFFERING_TEXT.length + 2 ? BUFFERING_TEXT : undefined}
+              />
+            ) : (
+              <ProgressBar value={progressPercent} />
+            )}
           </Box>
           <Text> {timeText}</Text>
         </Box>
-        {showBuffering ? (
-          <Box marginLeft={1}>
-            <Spinner label={BUFFERING_TEXT} />
-          </Box>
-        ) : null}
       </Box>
     </Box>
   );

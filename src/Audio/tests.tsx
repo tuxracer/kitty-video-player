@@ -372,6 +372,72 @@ describe('Audio', () => {
     view.unmount();
   });
 
+  it('exposes current ref state inside transport callbacks', async () => {
+    const harness = createFakeAudio();
+    mockSuccessfulLoad(harness, 1_000);
+    const ref = createRef<AudioRef>();
+    const snapshots: Array<Pick<AudioRef, 'paused' | 'ended' | 'muted'>> = [];
+    const capture = (): void => {
+      snapshots.push({
+        paused: ref.current!.paused,
+        ended: ref.current!.ended,
+        muted: ref.current!.muted,
+      });
+    };
+    const view = render(
+      <Audio
+        ref={ref}
+        src="song.mp3"
+        onPlay={capture}
+        onPause={capture}
+        onEnded={capture}
+      />,
+    );
+    await flush();
+
+    ref.current!.muted = true;
+    await ref.current!.play();
+    ref.current!.pause();
+    await ref.current!.play();
+    await advance(AUDIO_TICK_MS + 1_000);
+
+    expect(snapshots).toEqual([
+      { paused: false, ended: false, muted: true },
+      { paused: true, ended: false, muted: true },
+      { paused: false, ended: false, muted: true },
+      { paused: true, ended: true, muted: true },
+      { paused: true, ended: true, muted: true },
+    ]);
+    view.unmount();
+  });
+
+  it('makes metadata available and seekable before autoplay', async () => {
+    const harness = createFakeAudio();
+    const events: string[] = [];
+    harness.audio.playFrom = (timeMs) => {
+      harness.playFroms.push(timeMs);
+      events.push(`play:${timeMs}`);
+    };
+    mockSuccessfulLoad(harness, 20_000);
+    const ref = createRef<AudioRef>();
+    const view = render(
+      <Audio
+        ref={ref}
+        src="song.mp3"
+        autoPlay
+        onLoadedMetadata={() => {
+          events.push(`metadata:${ref.current?.duration}`);
+          ref.current!.currentTime = 5;
+        }}
+      />,
+    );
+    await flush();
+
+    expect(events).toEqual(['metadata:20', 'play:5000']);
+    expect(ref.current?.currentTime).toBe(5);
+    view.unmount();
+  });
+
   it('delays loading and buffering indicators and hides them without controls', async () => {
     const pending = createDeferred<{
       kind: 'audio';
@@ -421,6 +487,19 @@ describe('Audio', () => {
     sized.unmount();
     narrow.unmount();
     tall.unmount();
+  });
+
+  it('keeps buffering output within the effective narrow width', async () => {
+    const harness = createFakeAudio();
+    harness.starting = true;
+    mockSuccessfulLoad(harness, 20_000);
+    const view = render(<Audio src="song.mp3" autoPlay width={5} />);
+    await flush();
+    await advance(LOADING_DELAY_MS);
+
+    expect(view.lastFrame()?.split('\n')).toHaveLength(1);
+    expect(view.lastFrame()).toHaveLength(15);
+    view.unmount();
   });
 
   it('handles transport keys only when keyboard is enabled', async () => {
@@ -504,6 +583,21 @@ describe('Audio', () => {
     expect(onLoadedMetadata).toHaveBeenCalledWith({ duration: 20 });
     await advance(AUDIO_TICK_MS + 1_000);
     expect(onTimeUpdate).toHaveBeenCalledWith({ currentTime: 1, duration: 20 });
+    view.unmount();
+  });
+
+  it('synchronizes muted prop changes after mount', async () => {
+    const harness = createFakeAudio();
+    mockSuccessfulLoad(harness, 20_000);
+    const ref = createRef<AudioRef>();
+    const view = render(<Audio ref={ref} src="song.mp3" muted={false} />);
+    await flush();
+    expect(ref.current?.muted).toBe(false);
+
+    view.rerender(<Audio ref={ref} src="song.mp3" muted />);
+    await flush();
+    expect(harness.mutedValues.at(-1)).toBe(true);
+    expect(ref.current?.muted).toBe(true);
     view.unmount();
   });
 
@@ -860,6 +954,86 @@ describe('useAudioPlaybackClock', () => {
     expect(clock.current?.buffering).toBe(false);
     expect(harness.playFroms).toEqual([0]);
     expect(harness.pauseCalls).toBe(1);
+    view.unmount();
+  });
+
+  it('keeps an onTimeUpdate seek made while looping', async () => {
+    const harness = createFakeAudio();
+    const clock = createRef<AudioPlaybackClock>();
+    const view = render(
+      <ClockHarness
+        ref={clock}
+        audio={harness.audio}
+        durationMs={1_100}
+        autoPlay
+        loop
+        onTimeUpdate={(event) => {
+          if (event.currentTime === 0) {
+            clock.current?.seekToMs(500);
+          }
+        }}
+      />,
+    );
+    await flush();
+
+    await advance(AUDIO_TICK_MS + 1_100);
+    expect(clock.current?.getElapsedMs()).toBe(500);
+    expect(harness.playFroms).toEqual([0, 500]);
+    view.unmount();
+  });
+
+  it('keeps an onTimeUpdate seek made at the end', async () => {
+    const harness = createFakeAudio();
+    const clock = createRef<AudioPlaybackClock>();
+    const onEnded = vi.fn();
+    const view = render(
+      <ClockHarness
+        ref={clock}
+        audio={harness.audio}
+        durationMs={1_000}
+        autoPlay
+        loop={false}
+        onTimeUpdate={(event) => {
+          if (event.currentTime === 1) {
+            clock.current?.seekToMs(500);
+          }
+        }}
+        onEnded={onEnded}
+      />,
+    );
+    await flush();
+
+    await advance(AUDIO_TICK_MS + 1_000);
+    expect(clock.current?.getElapsedMs()).toBe(500);
+    expect(clock.current?.playing).toBe(true);
+    expect(clock.current?.ended).toBe(false);
+    expect(harness.playFroms).toEqual([0, 500]);
+    expect(onEnded).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('keeps a nested onTimeUpdate seek made during a direct seek', async () => {
+    const harness = createFakeAudio();
+    const clock = createRef<AudioPlaybackClock>();
+    const view = render(
+      <ClockHarness
+        ref={clock}
+        audio={harness.audio}
+        durationMs={20_000}
+        autoPlay
+        loop={false}
+        onTimeUpdate={(event) => {
+          if (event.currentTime === 1) {
+            clock.current?.seekToMs(500);
+          }
+        }}
+      />,
+    );
+    await flush();
+
+    clock.current?.seekToMs(1_000);
+    expect(clock.current?.getElapsedMs()).toBe(500);
+    expect(harness.playFroms).toEqual([0, 500]);
     view.unmount();
   });
 
