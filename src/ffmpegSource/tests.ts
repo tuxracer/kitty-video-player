@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -254,17 +254,21 @@ describe('createFfmpegSource', () => {
   });
 
   it('spawns no decoder when close lands during open', async () => {
-    // largeVideo blocks ffmpeg on its stdout pipe (15 MB of frames), so a
-    // leaked decoder would still be alive and findable by its unique
-    // fixture path in the process table
-    const source = createFfmpegSource({ filePath: largeVideo });
+    // A large frame size blocks ffmpeg on its stdout pipe (15 MB of
+    // frames), so a leaked decoder would still be alive and findable in
+    // the process table. The fixture copy has a path no other test's
+    // ffmpeg ever carries, so a neighbor's just-killed process cannot
+    // alias the pgrep match.
+    const leakProbeVideo = join(fixtureDir, 'leak-probe.mp4');
+    await copyFile(largeVideo, leakProbeVideo);
+    const source = createFfmpegSource({ filePath: leakProbeVideo });
     const opening = source.open();
     await source.close();
     await opening;
     await expect(source.getFrameAt(0)).resolves.toBeNull();
     let leakedDecoder = true;
     try {
-      await execFileAsync('pgrep', ['-f', largeVideo]);
+      await execFileAsync('pgrep', ['-f', leakProbeVideo]);
     } catch {
       // pgrep exits nonzero when nothing matches
       leakedDecoder = false;

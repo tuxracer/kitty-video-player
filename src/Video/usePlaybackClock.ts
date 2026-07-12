@@ -87,7 +87,9 @@ export const usePlaybackClock = ({
           }
           if (timelineRef.current !== timeline) {
             // A playhead reset superseded this fetch (replay after ended,
-            // source change), keep the new position
+            // source change), keep the new position. The pushFrame above is
+            // deliberately not skipped: painting the already-fetched frame
+            // is harmless and the reset's own fetch repaints right after.
             return;
           }
           const previousSecond = Math.floor(elapsedRef.current / MS_PER_SECOND);

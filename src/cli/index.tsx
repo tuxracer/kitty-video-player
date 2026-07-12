@@ -176,7 +176,8 @@ try {
   // A failed probe handshake must not strand the decoder processes
   await source.close().catch(() => undefined);
   await audio?.close().catch(() => undefined);
-  process.stderr.write(`kitty-video-player: ${String(error)}\n`);
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`kitty-video-player: ${message}\n`);
   process.exit(EXIT_USAGE);
 }
 
