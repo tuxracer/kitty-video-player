@@ -2,7 +2,9 @@ import { spawn } from 'node:child_process';
 
 import ffmpegPath from 'ffmpeg-static';
 
+import { detectRangeSupport } from '../detectRangeSupport/index.ts';
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
+import { isRemoteUrl } from '../isRemoteUrl/index.ts';
 import {
   MS_PER_SECOND,
   READAHEAD_FRAME_CAP,
@@ -34,6 +36,9 @@ export const createFfmpegSource = (options: FfmpegSourceOptions): FrameSource =>
   let decoder: Decoder | null = null;
   let closed = false;
   let decodeFailureNoted = false;
+  // Whether ffmpeg can seek the input (local files, range-supporting
+  // servers). Decides where -ss goes when the decoder spawns, set by open()
+  let inputSeekable = true;
 
   const queueCapacity = (fps: number): number =>
     Math.min(Math.ceil(fps), READAHEAD_FRAME_CAP);
@@ -47,13 +52,21 @@ export const createFfmpegSource = (options: FfmpegSourceOptions): FrameSource =>
     }
     const frameBytes = streamInfo.width * streamInfo.height * RGB_CHANNELS;
     const frameIntervalMs = MS_PER_SECOND / streamInfo.fps;
+    // -ss placement: nothing at zero, because even -ss 0 makes the matroska
+    // demuxer attempt a seek that corrupts decoding on a non-seekable
+    // stream (live-muxed webm over chunked http). Input-side on seekable
+    // inputs, jumping straight to the target. Output-side otherwise, which
+    // reads from the start and discards decoded output up to the target,
+    // the only correct option on a stream that cannot seek.
+    const startArgs = startMs > 0 ? ['-ss', `${startMs / MS_PER_SECOND}`] : [];
     const child = spawn(
       ffmpegPath,
       [
         '-hide_banner',
         '-loglevel', 'error',
-        '-ss', `${startMs / MS_PER_SECOND}`,
+        ...(inputSeekable ? startArgs : []),
         '-i', filePath,
+        ...(inputSeekable ? [] : startArgs),
         '-vf', `scale=${streamInfo.width}:${streamInfo.height}`,
         '-f', 'rawvideo',
         '-pix_fmt', 'rgb24',
@@ -130,7 +143,12 @@ export const createFfmpegSource = (options: FfmpegSourceOptions): FrameSource =>
   };
 
   const open = async (): Promise<FrameSourceInfo> => {
-    const probe = await probeFile(filePath);
+    // The range probe (never rejects) rides along with the metadata read
+    const [probe, rangeSupport] = await Promise.all([
+      probeFile(filePath),
+      isRemoteUrl(filePath) ? detectRangeSupport(filePath) : true,
+    ]);
+    inputSeekable = rangeSupport;
     const { width, height } = computeDecodeSize(probe.nativeWidth, probe.nativeHeight);
     info = {
       width,

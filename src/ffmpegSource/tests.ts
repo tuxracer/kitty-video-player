@@ -408,3 +408,72 @@ describe('http(s) URL sources', () => {
     await source.close();
   });
 });
+
+describe('non-seekable http sources', () => {
+  const HTTP_OK = 200;
+  const HTTP_NOT_FOUND = 404;
+
+  // Ignores Range and streams the body chunked with no Content-Length, the
+  // shape a generate-on-the-fly server produces. ffmpeg cannot seek this,
+  // so the decoders must read from the start instead of passing input-side
+  // -ss (which corrupts live-muxed matroska decoding on such a stream).
+  let streamServer: Server;
+  let streamBaseUrl: string;
+
+  beforeAll(async () => {
+    streamServer = createServer((request, response) => {
+      void (async () => {
+        let data: Buffer;
+        try {
+          data = await readFile(join(fixtureDir, basename(request.url ?? '')));
+        } catch {
+          response.writeHead(HTTP_NOT_FOUND);
+          response.end();
+          return;
+        }
+        // write() before end() forces chunked encoding with no
+        // Content-Length, matching a generate-on-the-fly server
+        response.writeHead(HTTP_OK);
+        response.write(data);
+        response.end();
+      })();
+    });
+    await new Promise<void>((resolve) => streamServer.listen(0, '127.0.0.1', resolve));
+    const address = streamServer.address();
+    if (address === null || typeof address === 'string') {
+      throw new Error('stream server reported no port');
+    }
+    streamBaseUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  afterAll(async () => {
+    streamServer.closeAllConnections();
+    await new Promise<void>((resolve, reject) => {
+      streamServer.close((error) => (error === undefined ? resolve() : reject(error)));
+    });
+  });
+
+  // The live-muxed matroska fixture mirrors what such servers actually
+  // serve (mp4 fixtures need a seekable input for their trailing moov)
+  it('plays a stream from a server without range support', async () => {
+    const source = createFfmpegSource({
+      filePath: `${streamBaseUrl}/${basename(noDurationVideo)}`,
+    });
+    const info = await source.open();
+    const frame = await waitForFrame(source, 0);
+    expect(frame.length).toBe(info.width * info.height * RGB_CHANNELS);
+    await source.close();
+  });
+
+  it('seeks a non-seekable stream by reading from the start', async () => {
+    const source = createFfmpegSource({
+      filePath: `${streamBaseUrl}/${basename(noDurationVideo)}`,
+    });
+    await source.open();
+    const sequential = await waitForFrame(source, 500);
+    await source.seek(500);
+    const sought = await waitForFrame(source, 500);
+    expect(sought).toEqual(sequential);
+    await source.close();
+  });
+});

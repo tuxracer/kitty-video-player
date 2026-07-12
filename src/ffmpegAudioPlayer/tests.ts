@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -242,6 +243,7 @@ let withAudio: string;
 let silentVideo: string;
 let notMedia: string;
 let shortAudio: string;
+let liveAudio: string;
 
 const FIXTURE_TIMEOUT_MS = 60_000;
 
@@ -271,6 +273,13 @@ beforeAll(async () => {
     '-f', 'lavfi', '-i', 'testsrc=duration=2:size=64x36:rate=10',
     '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1',
     ...encode, '-c:a', 'aac', shortAudio,
+  ]);
+  // Live-mode matroska (no duration header, streamable front to back) for
+  // the non-seekable http test, matching what streaming servers serve
+  liveAudio = join(fixtureDir, 'live-audio.mka');
+  await execFileAsync(ffmpegPath, [
+    '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
+    '-c:a', 'aac', '-f', 'matroska', '-live', '1', liveAudio,
   ]);
 }, FIXTURE_TIMEOUT_MS);
 
@@ -512,6 +521,41 @@ describe('createFfmpegAudioPlayer playback', () => {
     expect(fake.clearQueueCalls).toBe(2);
     expect(player.getPositionMs()).toBeNull();
     await player.close();
+  });
+
+  it('plays a non-seekable http stream, with playFrom reading from the start', async () => {
+    const HTTP_OK = 200;
+    // Ignores Range and streams chunked with no Content-Length, so the
+    // decoder must place -ss output-side instead of asking the demuxer to
+    // seek a stream that cannot
+    const server = createServer((_request, response) => {
+      void (async () => {
+        const data = await readFile(liveAudio);
+        response.writeHead(HTTP_OK);
+        response.write(data);
+        response.end();
+      })();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (address === null || typeof address === 'string') {
+      throw new Error('stream server reported no port');
+    }
+    const url = `http://127.0.0.1:${address.port}/live-audio.mka`;
+    const fake = createFakeDeviceFactory();
+    const player = createFfmpegAudioPlayer({ filePath: url, createDevice: fake.createDevice });
+    try {
+      await expect(player.open()).resolves.toEqual({ hasAudio: true });
+      player.playFrom(500);
+      expect(player.getPositionMs()).toBe(500);
+      await waitFor(() => fake.written.length >= 3);
+    } finally {
+      await player.close();
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error === undefined ? resolve() : reject(error)));
+      });
+    }
   });
 
   it('playFrom while playing restarts cleanly from the new offset', async () => {

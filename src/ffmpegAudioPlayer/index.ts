@@ -3,6 +3,8 @@ import { spawn } from 'node:child_process';
 import ffmpegPath from 'ffmpeg-static';
 
 import type { AudioPlayer, AudioPlayerInfo } from '../audioPlayer/index.ts';
+import { detectRangeSupport } from '../detectRangeSupport/index.ts';
+import { isRemoteUrl } from '../isRemoteUrl/index.ts';
 import {
   AUDIO_QUEUE_CAP_MS,
   AUDIO_UNAVAILABLE_MESSAGE,
@@ -46,6 +48,9 @@ export const createFfmpegAudioPlayer = (options: FfmpegAudioPlayerOptions): Audi
   let closed = false;
   let muted = false;
   let decodeFailureNoted = false;
+  // Whether ffmpeg can seek the input (local files, range-supporting
+  // servers). Decides where -ss goes when the decoder spawns, set by open()
+  let inputSeekable = true;
 
   // Read through a function around the createDevice await below: TypeScript's
   // control-flow narrowing does not model the concurrent close() call that
@@ -95,15 +100,21 @@ export const createFfmpegAudioPlayer = (options: FfmpegAudioPlayerOptions): Audi
     if (ffmpegPath === null) {
       throw new Error('unreachable: ffmpeg path was checked in open()');
     }
+    // -ss placement mirrors the video decoder: nothing at zero (a seek to 0
+    // corrupts live-muxed matroska over non-seekable http), input-side on
+    // seekable inputs, output-side (read from the start, discard decoded
+    // output up to the target) on streams that cannot seek.
+    const startArgs = startMs > 0 ? ['-ss', `${startMs / MS_PER_SECOND}`] : [];
     const child = spawn(
       ffmpegPath,
       [
         '-hide_banner',
         '-loglevel', 'error',
-        '-ss', `${startMs / MS_PER_SECOND}`,
+        ...(inputSeekable ? startArgs : []),
         '-i', filePath,
         '-vn',
         '-sn',
+        ...(inputSeekable ? [] : startArgs),
         '-f', 's16le',
         '-ar', `${SAMPLE_RATE}`,
         '-ac', `${CHANNELS}`,
@@ -183,7 +194,11 @@ export const createFfmpegAudioPlayer = (options: FfmpegAudioPlayerOptions): Audi
     }
     let hasStream = false;
     try {
-      hasStream = await probeAudio();
+      // The range probe (never rejects) rides along with the audio probe
+      [hasStream, inputSeekable] = await Promise.all([
+        probeAudio(),
+        isRemoteUrl(filePath) ? detectRangeSupport(filePath) : true,
+      ]);
     } catch {
       // An injected probe may reject (a failed shared video probe), which
       // means silent playback, never a crash

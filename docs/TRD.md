@@ -163,7 +163,15 @@ system install is needed:
 - One streaming ffmpeg process decodes rawvideo rgb24 into a readahead queue,
   capped at 60 frames (about one second of video), with stream pause/resume
   backpressure.
-- A seek or backward time jump respawns ffmpeg with input-side `-ss`.
+- A seek or backward time jump respawns ffmpeg with `-ss`. Its placement
+  depends on whether ffmpeg can seek the input, detected once at open with a
+  one-byte Range request (`detectRangeSupport`): input-side for local files
+  and range-supporting servers (jumps straight to the target), output-side
+  for non-seekable streams (reads from the start and discards decoded
+  output up to the target). A start at zero passes no `-ss` at all, because
+  even `-ss 0` makes the matroska demuxer attempt a seek that corrupts
+  VP9 decoding on a non-seekable live-muxed stream. The audio decoder
+  follows the same rules.
 - Frames are scaled to fit 960x540 at decode time. kitty-motion scales the
   framebuffer to the panel region anyway, so decoding beyond that cap is
   wasted memory and CPU (a 4K rgb24 frame is about 24 MB, a capped one about
