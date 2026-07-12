@@ -23,15 +23,21 @@ tests can import it without executing the entry.
 2. Guard on terminal capability. If stdout is not a TTY, print a notice and
    exit 0 (CI-friendly, nothing is drawn).
 3. Resolve the render path (see below).
-4. Open the `FrameSource`. A file or http(s) URL argument opens
-   `ffmpegSource` (ffprobe and ffmpeg read both directly, only the local
-   existence check is skipped for URLs), no argument opens the built-in
-   `proceduralSource`. An open still running after `LOADING_DELAY_MS`
-   shows a loading indicator on stderr (an animated spinner line on a TTY,
-   erased again when the open finishes, or one plain notice elsewhere),
-   since a remote probe can take seconds with nothing else on screen yet.
-   It runs before any Ink render exists, so `startLoadingIndicator` writes
-   the same dots animation @inkjs/ui's Spinner uses directly to stderr.
+4. Open the `FrameSource`. No argument opens the built-in
+   `proceduralSource`. A file or http(s) URL argument is classified first,
+   with a single `probeMediaFile` ffprobe run (the local existence check is
+   skipped for URLs, ffprobe itself reports an unreachable one), and
+   `openMediaSource` branches on the result: `ffmpegSource` for a real video
+   stream, `coverArtSource` for an audio-only file with embedded cover art
+   (falling back to `waveformSource` if the art fails to decode), and
+   `waveformSource` for audio without art. The same classification answers
+   the audio player's has-audio probe, so the file is only ffprobed once. An
+   open still running after `LOADING_DELAY_MS` shows a loading indicator on
+   stderr (an animated spinner line on a TTY, erased again when the open
+   finishes, or one plain notice elsewhere), since a remote probe can take
+   seconds with nothing else on screen yet. It runs before any Ink render
+   exists, so `startLoadingIndicator` writes the same dots animation
+   @inkjs/ui's Spinner uses directly to stderr.
 5. Run the full player or the fallback player.
 
 ### Render path resolution
@@ -226,6 +232,51 @@ The demo source, a hue-cycling ball on a Lissajous path over a 20 second
 loop, rendered as a pure function of time into a reused framebuffer. It plays
 when the CLI is run with no file argument.
 
+### mediaProbe
+
+Classifies a file or http(s) URL with one ffprobe run, feeding both the
+source construction and the audio player:
+
+- A real video stream (one whose disposition is not `attached_pic`) makes
+  the file `kind: 'video'`, carrying native dimensions, frame rate, duration,
+  and whether an audio stream is also present.
+- Otherwise an audio stream makes it `kind: 'audio'`, carrying duration and
+  the embedded cover art's native dimensions when the container has an
+  attached picture.
+- A file with neither video nor audio streams rejects with a
+  `MediaProbeError` of code `NO_PLAYABLE_STREAMS` (also `FILE_NOT_FOUND` for
+  a missing local path and `PROBE_FAILED` for unreadable media or missing
+  metadata).
+- When the container header carries no duration (live-muxed files),
+  `probeMediaFile` falls back to demuxing the relevant stream to null at
+  stream-copy speed and reading the last progress timestamp, the same
+  recovery `ffmpegSource` already used for video.
+
+`ffmpegSource` accepts this probe pre-computed (`FfmpegSourceOptions.probe`),
+so the CLI never probes a file twice.
+
+### coverArtSource
+
+Shows an audio file's embedded cover art as a static image. A one-shot
+ffmpeg run decodes the picture once at `open()`. `getFrameAt` always returns
+the decoded frame regardless of the requested timestamp (the playback
+clock's buffering gate retries at the playhead on startup, seeks, resumes,
+and drift resyncs, and would stall against a source that goes quiet),
+pushed at a nominal 10 fps so repeated identical frames stay cheap. An
+undecodable picture rejects `open()`, and `openMediaSource` falls back to
+`waveformSource`.
+
+### waveformSource
+
+Renders a live oscilloscope of an audio file's waveform. One ffmpeg process
+decodes the whole track to mono 8 kHz s16le PCM in a single pass into a
+preallocated buffer (about 57 MB per hour of audio), so seeks are free
+window moves rather than a decoder respawn. `getFrameAt` draws the min/max
+sample span of each pixel column across a window centered on the playhead.
+`isBuffering` holds the playback clock's gate until the decode is 2 seconds
+ahead of the playhead, and a decoder crash freezes the trace instead of
+failing playback.
+
 ### ffmpegSource
 
 Decodes video files with bundled ffmpeg-static and ffprobe-static, so no
@@ -277,6 +328,9 @@ system install is needed:
 - `src/fallbackPlayer/` - `resolveFallbackRenderMode`, `createFallbackScreen`,
   and `runFallbackPlayer`
 - `src/proceduralSource/` - the built-in demo source
+- `src/mediaProbe/` - `probeMediaFile`, `MediaProbeError`
+- `src/coverArtSource/` - the embedded cover art source
+- `src/waveformSource/` - the waveform oscilloscope source
 - `src/ffmpegSource/` - the file decoder
 - `src/playerLayout/` - `computePanelRegion` and `computeEmbeddedRegion`
 - `src/formatTime/` - millisecond timestamps as `m:ss`, switching to

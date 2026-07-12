@@ -28,8 +28,8 @@ export const HELP_TEXT = `kitty-video-player, a terminal video player (Ink UI wi
 
 Usage:
   kitty-video-player            play the built-in procedural demo
-  kitty-video-player <file>     play a video file (decoded with the bundled ffmpeg)
-  kitty-video-player <url>      play a video from an http(s) URL
+  kitty-video-player <file>     play a video or audio file (decoded with the bundled ffmpeg)
+  kitty-video-player <url>      play media from an http(s) URL
 
 Options:
   -h, --help              print this help and exit
@@ -53,6 +53,10 @@ Controls:
   m                       mute or unmute audio
   q or Ctrl-C             quit
   (the same keys work in fallback mode, there is just no on-screen UI)
+
+Audio files (mp3, ogg, flac, and anything else ffmpeg decodes) play with
+their embedded cover art when they have one, or a live waveform when they
+do not.
 
 The full player requires an interactive Kitty or Ghostty terminal (Kitty
 graphics protocol with Unicode placeholder support) outside tmux/screen.

@@ -14,8 +14,9 @@ import type { RenderMode } from 'kitty-motion';
 import type { AudioPlayer } from '../audioPlayer/index.ts';
 import { createFallbackScreen, resolveFallbackRenderMode, runFallbackPlayer } from '../fallbackPlayer/index.ts';
 import { createFfmpegAudioPlayer } from '../ffmpegAudioPlayer/index.ts';
-import { createFfmpegSource, isFfmpegSourceError } from '../ffmpegSource/index.ts';
+import { isFfmpegSourceError } from '../ffmpegSource/index.ts';
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
+import { isMediaProbeError, probeMediaFile } from '../mediaProbe/index.ts';
 import { Video } from '../Video/index.tsx';
 import { computePanelRegion } from '../playerLayout/index.ts';
 import { createProceduralSource } from '../proceduralSource/index.ts';
@@ -34,12 +35,14 @@ import {
 } from './consts.ts';
 import { detectFallbackReasons } from './detectFallbackReasons.ts';
 import { startLoadingIndicator } from './loadingIndicator.ts';
+import { openMediaSource } from './openMediaSource.ts';
 import { parseCliArgs } from './parseCliArgs.ts';
 
 export { parseCliArgs } from './parseCliArgs.ts';
 export { detectFallbackReasons } from './detectFallbackReasons.ts';
 export { confirmFallback } from './confirmFallback.ts';
 export { startLoadingIndicator } from './loadingIndicator.ts';
+export { openMediaSource } from './openMediaSource.ts';
 export * from './consts.ts';
 export * from './types.ts';
 
@@ -101,22 +104,23 @@ if (fallback) {
   }
 }
 
-const source: FrameSource =
-  args.file === undefined ? createProceduralSource() : createFfmpegSource({ filePath: args.file });
-
 // Only file playback has audio. The procedural demo is silent, and a file
 // whose audio cannot play (no stream, no device) resolves hasAudio false
 // and is closed again, so the players below see null and skip every call.
-// The audio player opens in parallel with the video source and reads the
-// has-audio bit from the video probe's result, so startup runs one ffprobe
-// and the audio device open hides behind the video open.
-const openingSource = source.open();
+// One classification probe runs per file and feeds both pipelines: the
+// source construction branches on it, and the audio player reads its
+// has-audio answer from it, so startup runs one ffprobe and the audio
+// device open hides behind the source open.
+const openingProbe = args.file === undefined ? null : probeMediaFile(args.file);
 const audioPlayer =
-  args.file === undefined
+  args.file === undefined || openingProbe === null
     ? null
     : createFfmpegAudioPlayer({
         filePath: args.file,
-        probeAudio: async () => (await openingSource).hasAudio ?? false,
+        probeAudio: async () => {
+          const probe = await openingProbe;
+          return probe.kind === 'audio' ? true : probe.hasAudio;
+        },
       });
 
 // Resolves the opened player or null, never rejects: AudioPlayer.open()
@@ -141,14 +145,25 @@ const openAudio = async (): Promise<AudioPlayer | null> => {
 // skips finally blocks.
 const loadingIndicator = args.file === undefined ? null : startLoadingIndicator(args.file);
 
+let source: FrameSource;
 let info: FrameSourceInfo;
 let audio: AudioPlayer | null = null;
 try {
-  [info, audio] = await Promise.all([openingSource, openAudio()]);
+  if (args.file === undefined || openingProbe === null) {
+    source = createProceduralSource();
+    info = await source.open();
+  } else {
+    const file = args.file;
+    const openingSource = openingProbe.then((probe) => openMediaSource({ filePath: file, probe }));
+    const [opened, openedAudio] = await Promise.all([openingSource, openAudio()]);
+    ({ source, info } = opened);
+    audio = openedAudio;
+  }
 } catch (error) {
   loadingIndicator?.stop();
   await audioPlayer?.close().catch(() => undefined);
-  const message = isFfmpegSourceError(error) ? error.message : String(error);
+  const message =
+    isMediaProbeError(error) || isFfmpegSourceError(error) ? error.message : String(error);
   process.stderr.write(`kitty-video-player: ${message}\n`);
   process.exit(EXIT_USAGE);
 }
