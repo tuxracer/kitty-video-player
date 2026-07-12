@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { AudioPlayer } from '../audioPlayer/index.ts';
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
 import { KEY_ARROW_LEFT, KEY_ARROW_RIGHT, resolveFallbackRenderMode, runFallbackPlayer } from './index.ts';
 import type { FallbackKeyInput, FallbackScreen } from './index.ts';
@@ -95,6 +96,43 @@ const createFakeSource = (): FakeSourceHarness => {
   return harness;
 };
 
+interface FakeAudioHarness {
+  audio: AudioPlayer;
+  playFroms: number[];
+  pauseCalls: number;
+  mutedValues: boolean[];
+  closeCalls: number;
+  positionMs: number | null;
+}
+
+const createFakeAudio = (): FakeAudioHarness => {
+  const harness: FakeAudioHarness = {
+    playFroms: [],
+    pauseCalls: 0,
+    mutedValues: [],
+    closeCalls: 0,
+    positionMs: null,
+    audio: {
+      open: () => Promise.resolve({ hasAudio: true }),
+      playFrom: (timeMs) => {
+        harness.playFroms.push(timeMs);
+      },
+      pause: () => {
+        harness.pauseCalls += 1;
+      },
+      setMuted: (muted) => {
+        harness.mutedValues.push(muted);
+      },
+      getPositionMs: () => harness.positionMs,
+      close: () => {
+        harness.closeCalls += 1;
+        return Promise.resolve();
+      },
+    },
+  };
+  return harness;
+};
+
 interface Setup {
   done: Promise<void>;
   screen: FakeScreenHarness;
@@ -102,7 +140,7 @@ interface Setup {
   keys: FakeInputHarness;
 }
 
-const setup = (): Setup => {
+const setup = (audio?: FakeAudioHarness): Setup => {
   const screen = createFakeScreen();
   const source = createFakeSource();
   const keys = createFakeInput();
@@ -111,14 +149,22 @@ const setup = (): Setup => {
     source: source.source,
     info: INFO,
     input: keys.input,
+    audio: audio?.audio ?? null,
   });
   return { done, screen, source, keys };
 };
 
-/** Quit the player and settle its teardown promise chain */
+/**
+ * Quit the player and settle its teardown promise chain. The audio describe
+ * block below runs under real timers (its loop-wrap test needs genuine
+ * setTimeout delays), so this only advances fake timers when they are
+ * actually installed, matching the outer describe block's beforeEach.
+ */
 const quit = async (state: Setup): Promise<void> => {
   state.keys.press('q');
-  await vi.advanceTimersByTimeAsync(0);
+  if (vi.isFakeTimers()) {
+    await vi.advanceTimersByTimeAsync(0);
+  }
   await state.done;
 };
 
@@ -286,6 +332,77 @@ describe('runFallbackPlayer', () => {
     await settleSeek();
     // The third target is 15_000, past the 10_000 ms duration
     expect(state.source.seeks).toEqual([5_000, 10_000, 10_000]);
+    await quit(state);
+  });
+});
+
+describe('runFallbackPlayer audio', () => {
+  it('starts audio at zero and closes it on quit', async () => {
+    const audio = createFakeAudio();
+    const state = setup(audio);
+    expect(audio.playFroms[0]).toBe(0);
+    await quit(state);
+    expect(audio.closeCalls).toBe(1);
+  });
+
+  it('pauses audio on space and resumes from the playhead', async () => {
+    const audio = createFakeAudio();
+    const state = setup(audio);
+    state.keys.press(' ');
+    expect(audio.pauseCalls).toBe(1);
+    const playsBefore = audio.playFroms.length;
+    state.keys.press(' ');
+    expect(audio.playFroms.length).toBe(playsBefore + 1);
+    await quit(state);
+  });
+
+  it('restarts audio at the seek target while playing but not while paused', async () => {
+    const audio = createFakeAudio();
+    const state = setup(audio);
+    state.keys.press(KEY_ARROW_RIGHT);
+    expect(audio.playFroms.at(-1)).toBe(5_000);
+    state.keys.press(' ');
+    const playsBefore = audio.playFroms.length;
+    state.keys.press(KEY_ARROW_RIGHT);
+    expect(audio.playFroms.length).toBe(playsBefore);
+    await quit(state);
+  });
+
+  it('toggles mute on the m key and applies the initial muted option', async () => {
+    const audio = createFakeAudio();
+    const screen = createFakeScreen();
+    const source = createFakeSource();
+    const keys = createFakeInput();
+    const done = runFallbackPlayer({
+      screen: screen.screen,
+      source: source.source,
+      info: INFO,
+      input: keys.input,
+      audio: audio.audio,
+      muted: true,
+    });
+    expect(audio.mutedValues[0]).toBe(true);
+    keys.press('m');
+    expect(audio.mutedValues.at(-1)).toBe(false);
+    keys.press('q');
+    await done;
+  });
+
+  it('restarts audio at the wrap when playback loops', async () => {
+    const audio = createFakeAudio();
+    const state = setup(audio);
+    // Settle the initial frame fetch first, otherwise the first press's
+    // post-seek frame refresh is skipped by the in-flight guard (same race
+    // as the "clamps a forward seek" test above) and elapsedMs never leaves 0.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Two 5 s seeks clamp elapsed to the 10 s duration, then one tick wraps.
+    // The settle delays let each seek's promise chain land elapsedMs.
+    state.keys.press(KEY_ARROW_RIGHT);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    state.keys.press(KEY_ARROW_RIGHT);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, TICK_MS + 50));
+    expect(audio.playFroms.at(-1)).toBeLessThan(1_000);
     await quit(state);
   });
 });

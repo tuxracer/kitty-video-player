@@ -7,11 +7,12 @@ import {
 import type { RenderMode } from 'kitty-motion';
 
 import type { FrameSourceInfo } from '../frameSource/index.ts';
-import { SEEK_STEP_MS } from '../Video/index.tsx';
+import { DRIFT_RESYNC_THRESHOLD_MS, SEEK_STEP_MS } from '../Video/index.tsx';
 import {
   KEY_ARROW_LEFT,
   KEY_ARROW_RIGHT,
   KEY_CTRL_C,
+  KEY_MUTE,
   KEY_QUIT,
   KEY_SPACE,
   MS_PER_SECOND,
@@ -93,13 +94,18 @@ export const runFallbackPlayer = ({
   source,
   info,
   input,
+  audio = null,
+  muted = false,
 }: FallbackPlayerOptions): Promise<void> =>
   new Promise((resolve) => {
     let playing = true;
     let elapsedMs = 0;
     let inFlight = false;
     let sourceErrorNoted = false;
+    let audioMuted = muted;
+    let lastDriftSecond = 0;
     const intervalMs = Math.round(MS_PER_SECOND / info.fps);
+    audio?.setMuted(audioMuted);
 
     const noteSourceError = (): void => {
       if (!sourceErrorNoted) {
@@ -129,6 +135,9 @@ export const runFallbackPlayer = ({
 
     const seekToMs = (targetMs: number): void => {
       const clampedMs = Math.min(Math.max(targetMs, 0), info.durationMs);
+      if (playing) {
+        audio?.playFrom(clampedMs);
+      }
       void source
         .seek(clampedMs)
         .then(() => {
@@ -138,13 +147,29 @@ export const runFallbackPlayer = ({
     };
 
     showFrameAt(0);
+    audio?.playFrom(0);
     const interval = setInterval(() => {
       if (!playing || !screen.isWritable() || inFlight) {
         return;
       }
+      // Drift snap once per whole second, mirroring usePlaybackClock
+      const second = Math.floor(elapsedMs / MS_PER_SECOND);
+      if (second !== lastDriftSecond) {
+        lastDriftSecond = second;
+        const audioPositionMs = audio?.getPositionMs() ?? null;
+        if (audioPositionMs !== null && Math.abs(audioPositionMs - elapsedMs) > DRIFT_RESYNC_THRESHOLD_MS) {
+          audio?.playFrom(elapsedMs);
+        }
+      }
       const nextMs = elapsedMs + intervalMs;
+      if (nextMs < info.durationMs) {
+        showFrameAt(nextMs);
+        return;
+      }
       // Always loop, wrapping like usePlaybackClock's loop branch
-      showFrameAt(nextMs < info.durationMs ? nextMs : nextMs % info.durationMs);
+      const wrappedMs = nextMs % info.durationMs;
+      showFrameAt(wrappedMs);
+      audio?.playFrom(wrappedMs);
     }, intervalMs);
 
     const quit = (): void => {
@@ -153,8 +178,10 @@ export const runFallbackPlayer = ({
       input.setRawMode?.(false);
       input.pause?.();
       screen.dispose();
-      void source
-        .close()
+      void Promise.all([
+        source.close(),
+        audio === null ? Promise.resolve() : audio.close(),
+      ])
         .catch(noteSourceError)
         .finally(() => {
           resolve();
@@ -184,6 +211,15 @@ export const runFallbackPlayer = ({
         }
         if (key === KEY_SPACE) {
           playing = !playing;
+          if (playing) {
+            audio?.playFrom(elapsedMs);
+          } else {
+            audio?.pause();
+          }
+        }
+        if (key === KEY_MUTE) {
+          audioMuted = !audioMuted;
+          audio?.setMuted(audioMuted);
         }
         i += 1;
       }

@@ -1,4 +1,5 @@
 import type { CellRenderMode } from 'kitty-motion';
+import type { AudioPlayer } from '../audioPlayer/index.ts';
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
 
 /** Injectable detection seams for resolveFallbackRenderMode, defaulted to kitty-motion's detectors */
@@ -40,4 +41,8 @@ export interface FallbackPlayerOptions {
   info: FrameSourceInfo;
   /** Key event stream (process.stdin in production) */
   input: FallbackKeyInput;
+  /** Audio following the loop, or null/absent when the source has no audio */
+  audio?: AudioPlayer | null;
+  /** Start with audio muted (--muted) */
+  muted?: boolean;
 }

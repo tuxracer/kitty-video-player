@@ -15,3 +15,6 @@ export const KEY_ARROW_RIGHT = '\u001b[C';
 
 /** Left arrow escape sequence, seeks backward */
 export const KEY_ARROW_LEFT = '\u001b[D';
+
+/** Toggles audio mute */
+export const KEY_MUTE = 'm';
