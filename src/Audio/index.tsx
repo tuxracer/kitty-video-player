@@ -50,6 +50,9 @@ export const Audio = forwardRef<AudioRef, AudioProps>((props, ref): ReactElement
   autoPlayRef.current = autoPlay;
   const metadataCallbackRef = useRef(onLoadedMetadata);
   metadataCallbackRef.current = onLoadedMetadata;
+  const dispatchingMetadataRef = useRef(false);
+  const metadataTransportRevisionRef = useRef(0);
+  const metadataAutoplaySupersededRevisionRef = useRef(0);
   const clock = useAudioPlaybackClock({
     audio: managed.audio,
     durationMs: managed.durationMs,
@@ -73,6 +76,29 @@ export const Audio = forwardRef<AudioRef, AudioProps>((props, ref): ReactElement
     mutedRef.current = value;
     setMuted(value);
   }, []);
+  const playAudio = useCallback((): void => {
+    if (dispatchingMetadataRef.current) {
+      metadataTransportRevisionRef.current += 1;
+      metadataAutoplaySupersededRevisionRef.current = metadataTransportRevisionRef.current;
+    }
+    playClock();
+  }, [playClock]);
+  const pauseAudio = useCallback((): void => {
+    if (dispatchingMetadataRef.current) {
+      metadataTransportRevisionRef.current += 1;
+      metadataAutoplaySupersededRevisionRef.current = metadataTransportRevisionRef.current;
+    }
+    pauseClock();
+  }, [pauseClock]);
+  const seekAudioToMs = useCallback(
+    (targetMs: number): void => {
+      if (dispatchingMetadataRef.current) {
+        metadataTransportRevisionRef.current += 1;
+      }
+      seekClockToMs(targetMs);
+    },
+    [seekClockToMs],
+  );
 
   useEffect(() => managed.audio?.setMuted(muted), [managed.audio, muted]);
   useEffect(() => updateMuted(initialMuted), [initialMuted, updateMuted]);
@@ -80,8 +106,17 @@ export const Audio = forwardRef<AudioRef, AudioProps>((props, ref): ReactElement
     if (managed.audio === null || managed.durationMs === null) {
       return;
     }
-    metadataCallbackRef.current?.({ duration: managed.durationMs / MS_PER_SECOND });
-    if (autoPlayRef.current) {
+    const transportRevision = metadataTransportRevisionRef.current;
+    dispatchingMetadataRef.current = true;
+    try {
+      metadataCallbackRef.current?.({ duration: managed.durationMs / MS_PER_SECOND });
+    } finally {
+      dispatchingMetadataRef.current = false;
+    }
+    if (
+      autoPlayRef.current &&
+      metadataAutoplaySupersededRevisionRef.current <= transportRevision
+    ) {
       playClock();
     }
   }, [managed.audio, managed.durationMs, playClock]);
@@ -90,15 +125,15 @@ export const Audio = forwardRef<AudioRef, AudioProps>((props, ref): ReactElement
     ref,
     () => ({
       play: (): Promise<void> => {
-        playClock();
+        playAudio();
         return Promise.resolve();
       },
-      pause: pauseClock,
+      pause: pauseAudio,
       get currentTime(): number {
         return getElapsedMs() / MS_PER_SECOND;
       },
       set currentTime(seconds: number) {
-        seekClockToMs(seconds * MS_PER_SECOND);
+        seekAudioToMs(seconds * MS_PER_SECOND);
       },
       get paused(): boolean {
         return !clock.playing;
@@ -116,7 +151,7 @@ export const Audio = forwardRef<AudioRef, AudioProps>((props, ref): ReactElement
         return durationRef.current === null ? Number.NaN : durationRef.current / MS_PER_SECOND;
       },
     }),
-    [clock, getElapsedMs, pauseClock, playClock, seekClockToMs, updateMuted],
+    [clock, getElapsedMs, pauseAudio, playAudio, seekAudioToMs, updateMuted],
   );
 
   const { exit } = useApp();

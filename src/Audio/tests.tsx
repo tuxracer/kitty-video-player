@@ -438,6 +438,25 @@ describe('Audio', () => {
     view.unmount();
   });
 
+  it('lets metadata pause cancel pending autoplay', async () => {
+    const harness = createFakeAudio();
+    mockSuccessfulLoad(harness, 20_000);
+    const ref = createRef<AudioRef>();
+    const view = render(
+      <Audio
+        ref={ref}
+        src="song.mp3"
+        autoPlay
+        onLoadedMetadata={() => ref.current?.pause()}
+      />,
+    );
+    await flush();
+
+    expect(harness.playFroms).toEqual([]);
+    expect(ref.current?.paused).toBe(true);
+    view.unmount();
+  });
+
   it('delays loading and buffering indicators and hides them without controls', async () => {
     const pending = createDeferred<{
       kind: 'audio';
