@@ -777,6 +777,78 @@ describe('Video audio wiring', () => {
     expect(audio.pauseCalls).toBeGreaterThanOrEqual(1);
     unmount();
   });
+
+  it('keeps audio playing when an onPause handler synchronously resumes the clock', async () => {
+    const { harness, source, info } = await setup();
+    const audio = createFakeAudio();
+    const ref = createRef<VideoRef>();
+    const { unmount } = render(
+      <Video
+        ref={ref}
+        screen={harness.screen}
+        source={source}
+        info={info}
+        audio={audio.audio}
+        autoPlay
+        onPause={() => {
+          // A host callback restarting playback synchronously: the trailing
+          // audio pause in pause() must observe the playing state and skip
+          void ref.current?.play();
+        }}
+      />,
+    );
+    await flush();
+    const playsBefore = audio.playFroms.length;
+    ref.current?.pause();
+    await flush();
+    // The nested play() restarted audio and the outer pause() never
+    // silenced it
+    expect(audio.pauseCalls).toBe(0);
+    expect(audio.playFroms.length).toBe(playsBefore + 1);
+    unmount();
+  });
+
+  it('restarts audio when an onEnded handler synchronously replays', async () => {
+    const info: FrameSourceInfo = {
+      width: 8,
+      height: 4,
+      colorSpace: 'rgb24',
+      durationMs: 500,
+      fps: 10,
+    };
+    const harness = createFakeScreen();
+    const sourceHarness = createFakeSource(info);
+    const audio = createFakeAudio();
+    const ref = createRef<VideoRef>();
+    let endedCount = 0;
+    const { unmount } = render(
+      <Video
+        ref={ref}
+        screen={harness.screen}
+        source={sourceHarness.source}
+        info={info}
+        audio={audio.audio}
+        autoPlay
+        onEnded={() => {
+          endedCount += 1;
+          if (endedCount === 1) {
+            // Auto-replay from inside the ended event: the ended branch's
+            // trailing audio pause must observe the restarted state and skip
+            void ref.current?.play();
+          }
+        }}
+      />,
+    );
+    // 500 ms duration at 10 fps ends in about half a second, the wait leaves
+    // margin for the end without reaching the replay's own end
+    await delay(750);
+    await flush();
+    expect(endedCount).toBe(1);
+    expect(audio.pauseCalls).toBe(0);
+    expect(audio.playFroms.at(-1)).toBe(0);
+    expect(audio.playFroms.length).toBeGreaterThanOrEqual(2);
+    unmount();
+  });
 });
 
 describe('Video mute', () => {
@@ -841,6 +913,9 @@ describe('Video managed-mode audio', () => {
     managedScreenMocks.createManagedScreen.mockImplementation(
       () => createFakeScreen().screen,
     );
+    // Shared hoisted mocks: reset so no test inherits a neighbor's stub
+    ffmpegSourceMocks.createFfmpegSource.mockReset();
+    ffmpegAudioMocks.createFfmpegAudioPlayer.mockReset();
   });
 
   it('creates and opens an audio player for a src file and mutes it via the m key', async () => {
@@ -884,8 +959,30 @@ describe('Video managed-mode audio', () => {
     unmount();
   });
 
+  it('closes the audio player when the video source fails to open', async () => {
+    const failingSource: FrameSource = {
+      open: () => Promise.reject(new Error('unreadable')),
+      getFrameAt: () => Promise.resolve(null),
+      seek: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+    };
+    ffmpegSourceMocks.createFfmpegSource.mockReturnValue(failingSource);
+    const audio = createFakeAudio();
+    ffmpegAudioMocks.createFfmpegAudioPlayer.mockReturnValue(audio.audio);
+    const onError = vi.fn();
+
+    const { unmount } = render(
+      <Video src="/some/file.mp4" width={20} height={10} onError={onError} />,
+    );
+    await flush();
+    expect(onError).toHaveBeenCalled();
+    // The error state can persist indefinitely, so the opened audio player
+    // is released with it instead of waiting for unmount
+    expect(audio.closeCalls).toBeGreaterThanOrEqual(1);
+    unmount();
+  });
+
   it('creates no audio player for srcObject sources', async () => {
-    ffmpegAudioMocks.createFfmpegAudioPlayer.mockClear();
     const videoSource = createFakeSource(INFO);
     const { unmount } = render(
       <Video srcObject={videoSource.source} width={20} height={10} autoPlay />,

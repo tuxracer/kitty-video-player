@@ -52,6 +52,12 @@ export const usePlaybackClock = ({
   // handler can synchronously re-enter the clock and flip the ref.
   const readPlaying = useCallback((): boolean => playingRef.current, []);
 
+  // Bumped whenever the playhead is reset outside a frame fetch (replay
+  // after ended, source change). A fetch that started on the old timeline
+  // still paints its frame, but must not write its timestamp back into
+  // elapsedRef and clobber the reset.
+  const timelineRef = useRef(0);
+
   const noteSourceError = useCallback(
     (error: unknown): void => {
       callbacksRef.current.onError?.(error);
@@ -72,11 +78,17 @@ export const usePlaybackClock = ({
         return;
       }
       inFlightRef.current = true;
+      const timeline = timelineRef.current;
       void source
         .getFrameAt(nextMs)
         .then((frame) => {
           if (frame) {
             screen.pushFrame(frame);
+          }
+          if (timelineRef.current !== timeline) {
+            // A playhead reset superseded this fetch (replay after ended,
+            // source change), keep the new position
+            return;
           }
           const previousSecond = Math.floor(elapsedRef.current / MS_PER_SECOND);
           const nextSecond = Math.floor(nextMs / MS_PER_SECOND);
@@ -124,9 +136,12 @@ export const usePlaybackClock = ({
 
   const play = useCallback((): void => {
     if (endedRef.current) {
-      // HTML5 semantics: play() after ended restarts from the beginning
+      // HTML5 semantics: play() after ended restarts from the beginning.
+      // The timeline bump keeps the ended branch's still-in-flight final
+      // frame paint from writing durationMs back over the reset playhead.
       endedRef.current = false;
       setEnded(false);
+      timelineRef.current += 1;
       elapsedRef.current = 0;
       setElapsedMs(0);
     }
@@ -154,6 +169,7 @@ export const usePlaybackClock = ({
   // A new source starts from zero (src/srcObject changes in managed mode).
   // Runs harmlessly on first mount, everything is already zero.
   useEffect(() => {
+    timelineRef.current += 1;
     elapsedRef.current = 0;
     setElapsedMs(0);
     endedRef.current = false;

@@ -109,6 +109,10 @@ export const useManagedResources = ({
       })
       .catch((error: unknown) => {
         if (!cancelled) {
+          // The audio player may have opened its device before the video
+          // side failed, and the error state can persist indefinitely, so
+          // release it now instead of waiting for the effect cleanup
+          void audioPlayer?.close().catch(() => undefined);
           setResources({ status: 'error', screen: null, source: null, info: null, audio: null });
           callbacksRef.current.onError?.(error);
         }
