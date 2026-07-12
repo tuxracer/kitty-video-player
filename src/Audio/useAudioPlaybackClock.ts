@@ -167,6 +167,9 @@ export const useAudioPlaybackClock = ({
         const previousSecond = Math.floor(elapsedRef.current / MS_PER_SECOND);
         const nextSecond = Math.floor(nextMs / MS_PER_SECOND);
         setPlayhead(nextMs, nextSecond !== previousSecond);
+        if (!readPlaying()) {
+          return;
+        }
         if (nextSecond !== previousSecond) {
           const audioPositionMs = audioRef.current.getPositionMs();
           if (
@@ -182,6 +185,9 @@ export const useAudioPlaybackClock = ({
       if (loopRef.current && currentDurationMs > 0) {
         const wrappedMs = nextMs % currentDurationMs;
         setPlayhead(wrappedMs, true);
+        if (!readPlaying()) {
+          return;
+        }
         startAt(wrappedMs);
         return;
       }

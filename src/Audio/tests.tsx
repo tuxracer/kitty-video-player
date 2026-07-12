@@ -258,6 +258,30 @@ describe('useAudioPlaybackClock', () => {
     view.unmount();
   });
 
+  it('does not restart for drift when onTimeUpdate pauses playback', async () => {
+    const harness = createFakeAudio();
+    harness.positionMs = 1_000 + DRIFT_RESYNC_THRESHOLD_MS + 1;
+    const clock = createRef<AudioPlaybackClock>();
+    const view = render(
+      <ClockHarness
+        ref={clock}
+        audio={harness.audio}
+        durationMs={20_000}
+        autoPlay
+        loop={false}
+        onTimeUpdate={() => clock.current?.pause()}
+      />,
+    );
+    await flush();
+
+    await advance(AUDIO_TICK_MS + 1_000);
+    expect(clock.current?.playing).toBe(false);
+    expect(clock.current?.buffering).toBe(false);
+    expect(harness.playFroms).toEqual([0]);
+    expect(harness.pauseCalls).toBe(1);
+    view.unmount();
+  });
+
   it('skips drift correction when the player has no position', async () => {
     const harness = createFakeAudio();
     harness.positionMs = null;
@@ -331,6 +355,33 @@ describe('useAudioPlaybackClock', () => {
     expect(harness.playFroms).toEqual([0, 0]);
     expect(harness.pauseCalls).toBe(0);
     expect(clock.current?.playing).toBe(true);
+    view.unmount();
+  });
+
+  it('does not restart a loop when its onTimeUpdate pauses playback', async () => {
+    const harness = createFakeAudio();
+    const clock = createRef<AudioPlaybackClock>();
+    const view = render(
+      <ClockHarness
+        ref={clock}
+        audio={harness.audio}
+        durationMs={1_100}
+        autoPlay
+        loop
+        onTimeUpdate={(event) => {
+          if (event.currentTime === 0) {
+            clock.current?.pause();
+          }
+        }}
+      />,
+    );
+    await flush();
+
+    await advance(AUDIO_TICK_MS + 1_100);
+    expect(clock.current?.playing).toBe(false);
+    expect(clock.current?.buffering).toBe(false);
+    expect(harness.playFroms).toEqual([0]);
+    expect(harness.pauseCalls).toBe(1);
     view.unmount();
   });
 
