@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import ffmpegPath from 'ffmpeg-static';
 import ffprobeStatic from 'ffprobe-static';
 
+import { isRecord } from '../isRecord/index.ts';
 import {
   HALF_ROTATION_DEGREES,
   MAX_DECODE_HEIGHT,
@@ -29,9 +30,6 @@ export const computeDecodeSize = (nativeWidth: number, nativeHeight: number): De
   const scale = Math.min(1, MAX_DECODE_WIDTH / nativeWidth, MAX_DECODE_HEIGHT / nativeHeight);
   return { width: toEven(nativeWidth * scale), height: toEven(nativeHeight * scale) };
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null;
 
 /** ffprobe reports numbers both as JSON numbers and as decimal strings */
 const asFiniteNumber = (value: unknown): number | null => {
