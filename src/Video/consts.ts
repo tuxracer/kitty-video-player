@@ -31,5 +31,8 @@ export const LOADING_DELAY_MS = 1_000;
 /** Shown centered in the reserved box while the source opens slowly */
 export const LOADING_TEXT = 'loading video…';
 
+/** Shown in the controls row while the buffering gate holds longer than LOADING_DELAY_MS */
+export const BUFFERING_TEXT = 'buffering…';
+
 /** Audio drifting further than this from the video clock snaps back to the playhead */
 export const DRIFT_RESYNC_THRESHOLD_MS = 250;

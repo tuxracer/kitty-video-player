@@ -6,6 +6,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import { formatTime } from '../formatTime/index.ts';
 import { computeEmbeddedRegion, computePanelRegion } from '../playerLayout/index.ts';
 import {
+  BUFFERING_TEXT,
   HELP_TEXT,
   LOADING_DELAY_MS,
   LOADING_TEXT,
@@ -262,6 +263,23 @@ export const Video = forwardRef<VideoRef, VideoProps>((props, ref): ReactElement
     };
   }, [external, managed.status]);
 
+  // Buffering indicator in the controls row, with the same delay so the
+  // brief hold every local start goes through never flashes it. Remote
+  // sources can hold for seconds, and this is the only sign of progress.
+  const [showBuffering, setShowBuffering] = useState(false);
+  useEffect(() => {
+    if (!clock.buffering) {
+      setShowBuffering(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setShowBuffering(true);
+    }, LOADING_DELAY_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [clock.buffering]);
+
   if (props.screen === undefined) {
     if (managed.status === 'unsupported' || managed.status === 'error') {
       return (
@@ -336,6 +354,7 @@ export const Video = forwardRef<VideoRef, VideoProps>((props, ref): ReactElement
             {' '}
             {formatTime(clock.elapsedMs)} / {formatTime(durationMs)}
           </Text>
+          {showBuffering ? <Text dimColor> {BUFFERING_TEXT}</Text> : null}
         </Box>
       ) : null}
       {help ? <Text dimColor>{HELP_TEXT}</Text> : null}

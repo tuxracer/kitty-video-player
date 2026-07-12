@@ -39,6 +39,7 @@ export const usePlaybackClock = ({
   const [playing, setPlaying] = useState(autoPlay);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [ended, setEnded] = useState(false);
+  const [buffering, setBuffering] = useState(true);
 
   const playingRef = useRef(autoPlay);
   const elapsedRef = useRef(0);
@@ -69,17 +70,24 @@ export const usePlaybackClock = ({
   const timelineRef = useRef(0);
 
   // The buffering gate, two phases. Armed at startup, seeks, loop wraps,
-  // replays, and source changes. While armed the interval retries the same
-  // position instead of advancing. Phase one waits for the source to
-  // deliver the frame at the playhead. Phase two starts audio there and
-  // keeps holding until the audio has made sound or reported it cannot
-  // (isStarting), so picture and sound begin together.
+  // replays, resumes, drift resyncs, and source changes. While armed the
+  // interval retries the same position instead of advancing. Phase one
+  // waits for the source to deliver the frame at the playhead. Phase two
+  // starts audio there and keeps holding until the audio has made sound or
+  // reported it cannot (isStarting), so picture and sound begin together.
+  // The buffering state mirrors the ref for the UI's indicator.
   const waitingRef = useRef(true);
 
   // Whether the currently armed gate has already issued its audio start.
   // Reset whenever the gate re-arms or audio is paused, so every hold
   // starts audio exactly once.
   const audioStartedRef = useRef(false);
+
+  const armGate = useCallback((): void => {
+    waitingRef.current = true;
+    audioStartedRef.current = false;
+    setBuffering(true);
+  }, []);
 
   const noteSourceError = useCallback(
     (error: unknown): void => {
@@ -132,6 +140,7 @@ export const usePlaybackClock = ({
               return;
             }
             waitingRef.current = false;
+            setBuffering(false);
           }
           const previousSecond = Math.floor(elapsedRef.current / MS_PER_SECOND);
           const nextSecond = Math.floor(nextMs / MS_PER_SECOND);
@@ -154,8 +163,7 @@ export const usePlaybackClock = ({
               playingRef.current &&
               Math.abs(audioPositionMs - nextMs) > DRIFT_RESYNC_THRESHOLD_MS
             ) {
-              waitingRef.current = true;
-              audioStartedRef.current = false;
+              armGate();
             }
           }
         })
@@ -164,7 +172,7 @@ export const usePlaybackClock = ({
           inFlightRef.current = false;
         });
     },
-    [info, noteSourceError, readPlaying, screen, source],
+    [armGate, info, noteSourceError, readPlaying, screen, source],
   );
 
   const pause = useCallback((): void => {
@@ -194,8 +202,7 @@ export const usePlaybackClock = ({
       endedRef.current = false;
       setEnded(false);
       timelineRef.current += 1;
-      waitingRef.current = true;
-      audioStartedRef.current = false;
+      armGate();
       elapsedRef.current = 0;
       setElapsedMs(0);
     }
@@ -211,11 +218,10 @@ export const usePlaybackClock = ({
     // audio restarted at the playhead is audible, kicked immediately so a
     // local resume clears within a frame fetch instead of a full tick.
     if (readPlaying() && !waitingRef.current) {
-      waitingRef.current = true;
-      audioStartedRef.current = false;
+      armGate();
       showFrameAt(elapsedRef.current);
     }
-  }, [readPlaying, showFrameAt]);
+  }, [armGate, readPlaying, showFrameAt]);
 
   const togglePlay = useCallback((): void => {
     if (playingRef.current) {
@@ -236,8 +242,7 @@ export const usePlaybackClock = ({
         return;
       }
       timelineRef.current += 1;
-      waitingRef.current = true;
-      audioStartedRef.current = false;
+      armGate();
       const previousSecond = Math.floor(elapsedRef.current / MS_PER_SECOND);
       const nextSecond = Math.floor(targetMs / MS_PER_SECOND);
       elapsedRef.current = targetMs;
@@ -249,20 +254,19 @@ export const usePlaybackClock = ({
         });
       }
     },
-    [info],
+    [armGate, info],
   );
 
   // A new source starts from zero (src/srcObject changes in managed mode).
   // Runs harmlessly on first mount, everything is already zero.
   useEffect(() => {
     timelineRef.current += 1;
-    waitingRef.current = true;
-    audioStartedRef.current = false;
+    armGate();
     elapsedRef.current = 0;
     setElapsedMs(0);
     endedRef.current = false;
     setEnded(false);
-  }, [source]);
+  }, [armGate, source]);
 
   // Playback loop. Deps are stable while resources are stable, so this is
   // effectively mount-only per resource set and survives every rerender.
@@ -274,8 +278,7 @@ export const usePlaybackClock = ({
     // audio through the gate like every other start. At mount and after
     // source changes the gate is already armed.
     if (playingRef.current && !waitingRef.current) {
-      waitingRef.current = true;
-      audioStartedRef.current = false;
+      armGate();
     }
     showFrameAt(elapsedRef.current);
     const intervalMs = Math.round(MS_PER_SECOND / info.fps);
@@ -330,7 +333,7 @@ export const usePlaybackClock = ({
       clearInterval(interval);
       audioRef.current?.pause();
     };
-  }, [info, loop, movePlayheadTo, readPlaying, screen, showFrameAt, source]);
+  }, [armGate, info, loop, movePlayheadTo, readPlaying, screen, showFrameAt, source]);
 
   const seekToMs = useCallback(
     (targetMs: number): void => {
@@ -364,6 +367,7 @@ export const usePlaybackClock = ({
     playing,
     elapsedMs,
     ended,
+    buffering,
     play,
     pause,
     togglePlay,

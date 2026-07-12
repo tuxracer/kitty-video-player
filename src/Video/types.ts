@@ -60,6 +60,8 @@ export interface PlaybackClock {
   /** Whole-second mirror of the playhead, drives Ink redraws */
   elapsedMs: number;
   ended: boolean;
+  /** True while the buffering gate holds (waiting for the frame at the playhead, then for audio to become audible) */
+  buffering: boolean;
   play(): void;
   pause(): void;
   togglePlay(): void;

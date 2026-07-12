@@ -26,7 +26,9 @@ tests can import it without executing the entry.
 4. Open the `FrameSource`. A file or http(s) URL argument opens
    `ffmpegSource` (ffprobe and ffmpeg read both directly, only the local
    existence check is skipped for URLs), no argument opens the built-in
-   `proceduralSource`.
+   `proceduralSource`. An open still running after `LOADING_DELAY_MS`
+   prints a loading notice to stderr, since a remote probe can take
+   seconds with nothing else on screen yet.
 5. Run the full player or the fallback player.
 
 ### Render path resolution
@@ -99,7 +101,9 @@ the video, so the picture participates in Ink layout like any other text.
   (`AudioPlayer.isStarting`), so picture, bar, and sound begin together.
   Remote URLs take seconds to produce their first frame and their first
   sound, and without the gate the bar runs ahead while the skipped content
-  is never shown. Once playback is underway a null frame still advances the
+  is never shown. A hold outlasting `LOADING_DELAY_MS` shows a dim
+  buffering note in the controls row (`clock.buffering` drives it), so a
+  slow start looks like loading instead of a hang. Once playback is underway a null frame still advances the
   clock, so frames drop and playback stays realtime. Seeks and wraps move
   the playhead synchronously (the bar tracks the jump immediately,
   HTML5-style) and bump a timeline counter so a frame fetch from the old

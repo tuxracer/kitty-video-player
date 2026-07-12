@@ -16,7 +16,7 @@ import { createFallbackScreen, resolveFallbackRenderMode, runFallbackPlayer } fr
 import { createFfmpegAudioPlayer } from '../ffmpegAudioPlayer/index.ts';
 import { createFfmpegSource, isFfmpegSourceError } from '../ffmpegSource/index.ts';
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
-import { Video } from '../Video/index.tsx';
+import { LOADING_DELAY_MS, Video } from '../Video/index.tsx';
 import { computePanelRegion } from '../playerLayout/index.ts';
 import { createProceduralSource } from '../proceduralSource/index.ts';
 import { confirmFallback } from './confirmFallback.ts';
@@ -132,6 +132,16 @@ const openAudio = async (): Promise<AudioPlayer | null> => {
   return null;
 };
 
+// A slow open says so instead of sitting silent: remote URLs probe (and
+// sometimes measure their duration) over the network, which can take
+// seconds. Delayed so fast local opens never print it.
+const loadingTimer =
+  args.file === undefined
+    ? null
+    : setTimeout(() => {
+        process.stderr.write(`kitty-video-player: loading ${args.file}…\n`);
+      }, LOADING_DELAY_MS);
+
 let info: FrameSourceInfo;
 let audio: AudioPlayer | null = null;
 try {
@@ -141,6 +151,10 @@ try {
   const message = isFfmpegSourceError(error) ? error.message : String(error);
   process.stderr.write(`kitty-video-player: ${message}\n`);
   process.exit(EXIT_USAGE);
+} finally {
+  if (loadingTimer !== null) {
+    clearTimeout(loadingTimer);
+  }
 }
 
 // Fallback mode never touches Ink. The renderer owns the whole screen

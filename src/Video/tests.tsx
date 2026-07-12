@@ -8,6 +8,7 @@ import type { FfmpegAudioPlayerOptions } from '../ffmpegAudioPlayer/index.ts';
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
 import { createProceduralSource } from '../proceduralSource/index.ts';
 import {
+  BUFFERING_TEXT,
   DRIFT_RESYNC_THRESHOLD_MS,
   HELP_TEXT,
   isVideoError,
@@ -933,6 +934,27 @@ describe('Video buffering gate', () => {
     expect(audio.playFroms[0]).toBe(0);
     expect(ref.current?.currentTime).toBeGreaterThan(0);
     expect(harness.pushedFrames.length).toBeGreaterThan(0);
+    unmount();
+  });
+
+  it('shows the buffering note after a sustained hold and hides it once playing', async () => {
+    const harness = createFakeScreen();
+    const stalling = createStallingSource();
+    const { lastFrame, unmount } = render(
+      <Video screen={harness.screen} source={stalling.source} info={INFO} autoPlay controls />,
+    );
+    await flush();
+    // The note is delayed, so a brief hold shows nothing
+    expect(lastFrame()).not.toContain(BUFFERING_TEXT);
+
+    await delay(1_100);
+    await flush();
+    expect(lastFrame()).toContain(BUFFERING_TEXT);
+
+    stalling.setReady(true);
+    await delay(100);
+    await flush();
+    expect(lastFrame()).not.toContain(BUFFERING_TEXT);
     unmount();
   });
 
