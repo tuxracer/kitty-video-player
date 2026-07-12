@@ -5,16 +5,9 @@ A terminal video player. The UI (title, progress bar, controls) is an [Ink](http
 ## Requirements
 
 - Node.js >= 24
-- An interactive Kitty or Ghostty terminal (Kitty graphics protocol with
-  Unicode placeholder support) outside tmux or GNU screen. On other
-  interactive terminals kitty-player offers to play without on-screen
-  controls, using kitty graphics when the terminal supports them (iTerm2
-  for example) or a fallback cell renderer otherwise (cell-background on
-  Terminal.app, half-block elsewhere, reduced quality, keys still work).
-  `--fallback` selects the best available renderer directly, and
-  `--render-mode` forces a specific mode. `kitty` alone bypasses detection
-  for the full player, a cell mode forces the fallback player, and
-  `--fallback --render-mode kitty` forces the kitty-without-controls tier.
+- An interactive Kitty or Ghostty terminal outside tmux or GNU screen. Other
+  interactive terminals get an offer to play in a reduced fallback mode
+  without on-screen controls (see the `--fallback` and `--render-mode` flags).
   When stdout is not a TTY it prints a notice and exits without drawing
 - ffmpeg is bundled (via ffmpeg-static and ffprobe-static), no system install needed
 
