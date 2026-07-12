@@ -76,6 +76,54 @@ The CLI then renders
 `exitOnCtrlC: false`, so Video's own input handler can dispose the Screen and
 close the source before Ink tears down.
 
+### Embedding with external resources
+
+The same external-resources mode is available to hosts embedding `Video` in
+their own Ink app. Most embedders should use the self-managed
+`<Video src>` / `<Video srcObject>` mode from the README instead, which
+constructs a probe-free Screen after Ink owns stdin and never hits the
+ordering constraint. External resources are for hosts that need a fully
+probed custom Screen or a non-Ink renderer, and they inherit the CLI's
+obligation to create the Screen before `render()`:
+
+```tsx
+import { render } from 'ink';
+import { createScreen } from 'kitty-motion';
+import { computePanelRegion, createProceduralSource, Video } from 'kitty-video-player';
+
+const source = createProceduralSource();
+const info = await source.open();
+
+const region = computePanelRegion({
+  termCols: process.stdout.columns,
+  termRows: process.stdout.rows,
+  sourceWidth: info.width,
+  sourceHeight: info.height,
+});
+
+// Create the Screen before rendering Ink. createScreen probes the terminal
+// through stdin, and Ink's useInput takes stdin after render().
+const screen = await createScreen({
+  output: process.stdout,
+  sourceWidth: info.width,
+  sourceHeight: info.height,
+  colorSpace: info.colorSpace,
+  placement: 'unicode',
+  embedded: true,
+  region,
+  autoResize: false,
+  autoDispose: false,
+});
+
+render(
+  <Video screen={screen} source={source} info={info} autoPlay loop controls keyboard title help />,
+  { exitOnCtrlC: false },
+);
+```
+
+The host owns the lifecycle of everything it passes in, including an optional
+already-opened `audio` player.
+
 ### Placeholder rendering
 
 `Screen.getPlaceholderRows()` returns one string per grid row, and Video

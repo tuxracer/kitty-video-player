@@ -113,50 +113,15 @@ inner content of an HTML5 `<video>` tag. `srcObject` accepts any
 handle (`play()`, `pause()`, `currentTime`, `paused`, `ended`, `duration`,
 `videoWidth`, `videoHeight`) follow the DOM element, with times in seconds.
 
-Hosts that need full control (a custom Screen, non-Ink renderers) can keep
-creating resources themselves and pass `screen`, `source`, and `info`, the
-way the CLI does.
+Beyond `Video`, the package exports the underlying pieces: the
+`FrameSource`/`FrameSourceInfo` contract, `createProceduralSource`,
+`createFfmpegSource`, `computePanelRegion`, `formatTime`, and the audio
+pieces, `createFfmpegAudioPlayer` and the `AudioPlayer`/`AudioPlayerInfo`
+contract.
 
-## Library use
-
-The package also exports the pieces for embedding a video panel in your own Ink app: `Video`, the `FrameSource`/`FrameSourceInfo` contract, `createProceduralSource`, `createFfmpegSource`, `computePanelRegion`, `formatTime`, and the audio pieces, `createFfmpegAudioPlayer` and the `AudioPlayer`/`AudioPlayerInfo` contract.
-
-```tsx
-import { render } from 'ink';
-import { createScreen } from 'kitty-motion';
-import { computePanelRegion, createProceduralSource, Video } from 'kitty-video-player';
-
-const source = createProceduralSource();
-const info = await source.open();
-
-const region = computePanelRegion({
-  termCols: process.stdout.columns,
-  termRows: process.stdout.rows,
-  sourceWidth: info.width,
-  sourceHeight: info.height,
-});
-
-// Create the Screen before rendering Ink. createScreen probes the terminal
-// through stdin, and Ink's useInput takes stdin after render().
-const screen = await createScreen({
-  output: process.stdout,
-  sourceWidth: info.width,
-  sourceHeight: info.height,
-  colorSpace: info.colorSpace,
-  placement: 'unicode',
-  embedded: true,
-  region,
-  autoResize: false,
-  autoDispose: false,
-});
-
-render(
-  <Video screen={screen} source={source} info={info} autoPlay loop controls keyboard title help />,
-  { exitOnCtrlC: false },
-);
-```
-
-`FrameSource` is the seam a real decoder implements. `open()` returns the stream info (pixel dimensions, color space, duration, frame rate). `getFrameAt(timeMs)` resolves the frame at or nearest after that timestamp, or `null` to keep the last frame on screen, and the returned buffer is only valid until the next call because sources may reuse it. `seek(timeMs)` repositions the source so nearby `getFrameAt` calls are cheap (a no-op for random-access sources). `close()` releases decoder resources and is idempotent. `createFfmpegSource` implements those four methods over a bundled ffmpeg pipe, and is the FrameSource behind file playback.
+Hosts that need full control (a custom probed Screen, non-Ink renderers) can
+create the resources themselves and pass `screen`, `source`, and `info`, the
+way the CLI does. That mode is documented in [docs/TRD.md](docs/TRD.md). `createFfmpegSource` implements those four methods over a bundled ffmpeg pipe, and is the FrameSource behind file playback.
 
 ## License
 
