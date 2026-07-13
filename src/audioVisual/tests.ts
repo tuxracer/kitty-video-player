@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
 import type { AudioProbeResult } from '../mediaProbe/index.ts';
@@ -7,6 +7,7 @@ import {
   openAudioVisual,
   resolveAudioPlaceholderLabel,
 } from './index.ts';
+import type { AudioVisualProp } from './index.ts';
 
 const INFO: FrameSourceInfo = {
   width: 64,
@@ -45,6 +46,10 @@ const fakeSource = (openError?: Error): { source: FrameSource; close: ReturnType
 };
 
 describe('normalizeAudioVisual', () => {
+  it('accepts exactly the public visual prop values', () => {
+    expectTypeOf<AudioVisualProp>().toEqualTypeOf<boolean | 'artwork' | 'waveform'>();
+  });
+
   it('maps boolean props and preserves explicit visual modes', () => {
     expect(normalizeAudioVisual()).toBe('none');
     expect(normalizeAudioVisual(false)).toBe('none');
