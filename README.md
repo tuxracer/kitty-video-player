@@ -43,8 +43,9 @@ their audio track too, through a second bundled ffmpeg process and a native
 audio device (audify/RtAudio), and degrade to silent video when no audio
 output device is available.
 Audio-only files (mp3, ogg, flac, and anything else ffmpeg decodes) play
-too, showing their embedded cover art when they have one or a live waveform
-oscilloscope when they do not.
+too. The CLI defaults to an automatic visual that shows embedded cover art
+when available and a live waveform otherwise. `--visual` can select artwork,
+waveform, or audio without a visual.
 Running with no arguments plays the built-in
 procedural demo clip, a hue-cycling ball moving on a Lissajous path over a
 20 second loop (silent, it has no audio track).
@@ -60,14 +61,15 @@ procedural demo clip, a hue-cycling ball moving on a Lissajous path over a
 
 ## CLI flags
 
-| Flag                   | Action                                                                                                                                                                                                                           |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<file>` or `<url>`    | play this video or audio file or http(s) URL (optional, plays the built-in demo when omitted)                                                                                                                                    |
-| `-h`, `--help`         | print help and exit                                                                                                                                                                                                              |
-| `-v`, `--version`      | print the version and exit                                                                                                                                                                                                       |
-| `--fallback`           | play without the Ink UI using the best available renderer (kitty graphics without controls when supported, otherwise a cell renderer)                                                                                            |
-| `--muted`              | start playback with audio muted (the m key toggles it back)                                                                                                                                                                      |
-| `--render-mode <mode>` | force a render mode: kitty, half-block, cell-background, emoji, or ascii (kitty alone forces the full player, cell modes force the fallback player, and `--fallback --render-mode kitty` forces kitty graphics without controls) |
+| Flag                                        | Action                                                                                                                                                                                                                           |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<file>` or `<url>`                         | play this video or audio file or http(s) URL (optional, plays the built-in demo when omitted)                                                                                                                                    |
+| `-h`, `--help`                              | print help and exit                                                                                                                                                                                                              |
+| `-v`, `--version`                           | print the version and exit                                                                                                                                                                                                       |
+| `--fallback`                                | play without the Ink UI using the best available renderer (kitty graphics without controls when supported, otherwise a cell renderer)                                                                                            |
+| `--muted`                                   | start playback with audio muted (the m key toggles it back)                                                                                                                                                                      |
+| `--visual <auto\|artwork\|waveform\|none>` | choose the visual for audio-only input (the default is auto). Video input ignores this flag                                                                                                                                      |
+| `--render-mode <mode>`                      | force a render mode: kitty, half-block, cell-background, emoji, or ascii (kitty alone forces the full player, cell modes force the fallback player, and `--fallback --render-mode kitty` forces kitty graphics without controls) |
 
 ## How it works
 
@@ -121,27 +123,33 @@ handle (`play()`, `pause()`, `currentTime`, `paused`, `ended`, `duration`,
 Audio can be embedded directly in the same Ink tree.
 
 ```tsx
-import { Text } from 'ink';
 import { Audio } from 'kitty-media-player';
 
-const App = () => (
-  <Audio src="song.mp3" autoPlay loop>
-    <Text dimColor>audio is unavailable</Text>
-  </Audio>
-);
+<Audio src="song.mp3" visual />
+<Audio src="song.mp3" visual="artwork" width={48} height={13} />
+<Audio src="song.mp3" visual="waveform" controls={false} />
+<Audio src="song.mp3" visual={false} />
 ```
 
+`Audio` defaults to `visual={false}`, unlike the CLI which defaults to `auto`.
+`visual` enables automatic selection, `visual="artwork"` requests embedded
+artwork, and `visual="waveform"` requests the oscilloscope. When requested
+artwork is missing or cannot be decoded, the visual area shows the media title
+or filename instead. Automatic selection tries artwork first and then waveform.
+
 Audio controls are shown by default. Set `controls={false}` to hide the row.
-The optional `width` and `height` values use terminal cells, and keyboard input
-is opt-in with `keyboard`. Children render when the initial load or audio output
-fails. `AudioRef` follows the media subset of `VideoRef` without the video
-dimensions.
+The optional `width` and `height` values use terminal cells and size the whole
+component, including the controls row. Visuals default to 48 by 13 cells when
+no size is given. Keyboard input is opt-in with `keyboard`. Children render
+when the initial load or audio output fails. `AudioRef` follows the media subset
+of `VideoRef` without the video dimensions.
 
 Beyond `Video`, the package exports the underlying pieces: the
 `FrameSource`/`FrameSourceInfo` contract, `createProceduralSource`,
 `createFfmpegSource`, `computePanelRegion`, `formatTime`, and the audio
-pieces, `createFfmpegAudioPlayer` and the `AudioPlayer`/`AudioPlayerInfo`
-contract.
+pieces. These include `createFfmpegAudioPlayer`, the
+`AudioPlayer`/`AudioPlayerInfo` contract, `AudioVisualProp`,
+`AudioVisualMode`, and `normalizeAudioVisual`.
 
 Hosts that need full control (a custom probed Screen, non-Ink renderers) can
 create the resources themselves and pass `screen`, `source`, and `info`, the

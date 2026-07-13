@@ -22,23 +22,23 @@ tests can import it without executing the entry.
 1. Parse argv. Unsupported flags and extra positionals exit with an error.
 2. Guard on terminal capability. If stdout is not a TTY, print a notice and
    exit 0 (CI-friendly, nothing is drawn).
-3. Resolve the render path (see below).
-4. Open the `FrameSource`. No argument opens the built-in
-   `proceduralSource`. A file or http(s) URL argument is classified first,
-   with a single `probeMediaFile` ffprobe run (the local existence check is
-   skipped for URLs, ffprobe itself reports an unreachable one), and
-   `openMediaSource` branches on the result: `ffmpegSource` for a real video
-   stream, `coverArtSource` for an audio-only file with embedded cover art
-   (falling back to `waveformSource` if the art fails to decode), and
-   `waveformSource` for audio without art. The same classification answers
-   the audio player's has-audio probe, so the file is only ffprobed once. An
+3. Open the playback resources. No argument opens the built-in
+   `proceduralSource`. A file or http(s) URL argument is classified with one
+   `probeMediaFile` ffprobe run. Video input opens `ffmpegSource`. Audio-only
+   input passes the probe and `--visual` mode to `openAudioVisual`. `auto`
+   tries cover art and then waveform, `artwork` uses a title or filename
+   placeholder when art is unavailable, `waveform` requests the waveform,
+   and `none` opens no `FrameSource`. Video input ignores `--visual`. The
+   same classification answers the audio player's has-audio probe, so the
+   file is only ffprobed once. An
    open still running after `LOADING_DELAY_MS` shows a loading indicator on
    stderr (an animated spinner line on a TTY, erased again when the open
    finishes, or one plain notice elsewhere), since a remote probe can take
    seconds with nothing else on screen yet. It runs before any Ink render
    exists, so `startLoadingIndicator` writes the same dots animation
    @inkjs/ui's Spinner uses directly to stderr.
-5. Run the full player or the fallback player.
+4. Resolve the render path from the opened playback kind (see below).
+5. Run the visual player, the Audio Ink player, or the audio-only fallback.
 
 ### Render path resolution
 
@@ -50,6 +50,12 @@ Forced modes resolve immediately, with no probe and no prompt:
   player. The last combination is a forced kitty-without-controls tier for
   terminals like iTerm2 that have graphics but no placeholders. It is also the
   escape hatch for tmux with allow-passthrough configured.
+
+These visual terminal rules apply to the procedural demo, video, and an
+audio-only file whose selected visual produced a `FrameSource`. Audio without
+a source does not run terminal graphics detection. It renders the Audio Ink
+controls normally, or uses `fallbackAudioPlayer` when `--fallback` or a cell
+render mode forces fallback playback.
 
 With no flags, `detectFallbackReasons` checks for missing placeholder support
 and tmux/screen sessions. If it reports a reason, the CLI resolves the
@@ -80,7 +86,9 @@ the Screen after rendering hangs or corrupts the probe handshake.
 The CLI then renders
 `<Video screen source info autoPlay loop controls keyboard title help />` with
 `exitOnCtrlC: false`, so Video's own input handler can dispose the Screen and
-close the source before Ink tears down.
+close the source before Ink tears down. This ordering also applies when an
+audio-only CLI input selects artwork or waveform because that visual follows
+the same `Video` path.
 
 ### Embedding with external resources
 
@@ -129,6 +137,22 @@ render(
 
 The host owns the lifecycle of everything it passes in, including an optional
 already-opened `audio` player.
+
+### Embedded Audio visuals
+
+The `Audio` component has no visual by default. `visual` normalizes to `auto`,
+while `visual="artwork"` and `visual="waveform"` request one source directly.
+Its `width` and `height` size the whole component, so the visual receives the
+remaining rows after the optional controls row. Artwork failure or missing
+artwork in explicit artwork mode produces a centered title or filename
+placeholder instead of failing audio playback.
+
+`Audio` loads its optional source and constructs a probe-free managed Screen
+after Ink has rendered. It must not use terminal capability probes because
+Ink already owns stdin. `useAudioVisualRenderer` pumps frames directly from
+the source to that Screen and holds audio startup until the first visual frame
+is ready or the visual has degraded to a placeholder. Resize updates the
+Screen region, re-reads its placeholder rows, and repaints the current frame.
 
 ### Placeholder rendering
 
@@ -207,6 +231,11 @@ change with the region, so cached rows go stale.
 (full-screen, autoResize), and `runFallbackPlayer` is a React-free port of
 the playback clock with raw-stdin keys (space, arrows, m mute, q/Ctrl-C) and
 no Ink UI. It never renders Ink.
+
+`src/fallbackAudioPlayer/` handles audio-only playback without a visual when
+fallback was forced. It opens no Screen and renders no Ink tree. It drives the
+audio clock directly, prints an optional artwork placeholder label, and reads
+the same raw-stdin controls as the visual fallback player.
 
 ## The FrameSource contract
 
@@ -321,12 +350,17 @@ system install is needed:
   self-managed resource lifecycle in `useManagedResources.ts`, probe-free
   Screen construction in `managedScreen.ts`, and the two-mode props union
   (external resources vs. self-managed)
+- `src/Audio/` - the Ink component `Audio`, its audio clock and managed audio
+  resources, optional managed visual Screen, and direct frame pumping
+- `src/audioVisual/` - normalizes the public visual prop and selects artwork,
+  waveform, a title or filename placeholder, or no visual
 - `src/frameSource/` - the `FrameSource`/`FrameSourceInfo` contract
 - `src/audioPlayer/` - the `AudioPlayer`/`AudioPlayerInfo` contract
 - `src/ffmpegAudioPlayer/` - the file audio decoder, one ffmpeg process per
   `playFrom` decoding into an audify (RtAudio) output device
 - `src/fallbackPlayer/` - `resolveFallbackRenderMode`, `createFallbackScreen`,
   and `runFallbackPlayer`
+- `src/fallbackAudioPlayer/` - raw-stdin audio playback without Ink or a Screen
 - `src/proceduralSource/` - the built-in demo source
 - `src/mediaProbe/` - `probeMediaFile`, `MediaProbeError`
 - `src/coverArtSource/` - the embedded cover art source
@@ -346,4 +380,4 @@ The build (tsup) has two entries that must stay separate bundles:
 - `cli` (`dist/cli.js`) is the executable bin. It runs the player at module
   top level, so importing it starts playback.
 - `index` (`dist/index.js`) is the library entry, for hosts embedding the
-  `Video` component in their own Ink app.
+  `Video` or `Audio` component in their own Ink app.

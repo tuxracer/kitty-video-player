@@ -11,20 +11,58 @@
 
 ## Architecture
 
-Data flow: `cli` parses argv (`parseCliArgs`, a pure function in its own file so tests can import it without executing the entry) and guards on terminal capability. If stdout is not a TTY it prints a notice and exits 0 (CI-friendly). `--render-mode kitty` alone forces the full Ink player past detection. `--fallback` alone, a cell `--render-mode`, or `--fallback` combined with `--render-mode kitty` all force the fallback player, the last of those a forced kitty-without-controls tier for terminals like iTerm2 that have graphics but no placeholders, and a forced mode resolves immediately with no probe and no prompt. With no flags, if `detectFallbackReasons` reports missing placeholder support or a tmux/screen session, the cli resolves the fallback tier first via `resolveFallbackRenderMode` (kitty graphics without controls when the kitty graphics probe passes, otherwise the auto cell mode from `detectCellRenderMode`), warns, appends a note when the resolved tier is kitty, and prompts with wording that matches the resolved tier. The kitty tier is skipped inside tmux/screen because the multiplexer swallows the graphics escapes even when the environment looks like kitty, so the cell renderer is used there, and `--fallback --render-mode kitty` remains the forced escape hatch for tmux with allow-passthrough. Declining exits 0. Either path then opens the `FrameSource`: the built-in `proceduralSource` with no file argument, otherwise `probeMediaFile` classifies the file once and `openMediaSource` branches on it (`ffmpegSource` for video, `coverArtSource` for audio with embedded art falling back to `waveformSource` when the art cannot decode, `waveformSource` for audio without art), with the classification also answering the audio player's has-audio probe so one ffprobe serves both pipelines. In fallback mode `runFallbackPlayer` drives a probe-free Screen at the resolved render mode with its own clock and raw-stdin keys, and never renders Ink. Otherwise the cli computes the panel `region` with `computePanelRegion`, and awaits kitty-motion's `createScreen` (with `renderMode: 'kitty'` when `--render-mode kitty` was given without `--fallback`, otherwise following detection) BEFORE calling Ink's `render()`. That ordering is load-bearing because the capability probes read responses from stdin, and Ink's `useInput` takes stdin over once rendering starts. Then it renders `<Video screen source info autoPlay loop controls keyboard title help />` with `exitOnCtrlC: false` so Video's own input handler can dispose the Screen and close the source before Ink tears down. For file arguments the cli also opens an `AudioPlayer` (`createFfmpegAudioPlayer`) alongside the source, passed through as the `audio` prop, and the playback clock (and the fallback loop's own copy of it) drives that player on play, pause, seek, and loop with a 250 ms drift snap back to the video clock's position once per displayed second. The video clock stays master, never the other way around.
+Audio-only CLI routing depends on `--visual`, which defaults to `auto`.
+`resolveMediaPlayback` sends video probes to `openMediaSource` and audio probes
+to `openAudioVisual`. Automatic selection tries cover art and then waveform.
+Explicit artwork falls back to a title or filename placeholder, waveform tries
+only the waveform, and none opens no `FrameSource`. Video input ignores the
+option. Audio with an artwork or waveform source follows the existing visual
+Video path, including Screen creation before Ink. Audio with a placeholder or
+no visual skips graphics detection and renders `AudioPlayerView`, or uses
+`runFallbackAudioPlayer` when fallback is forced.
+
+The CLI guards non-TTY output, parses argv, and opens playback resources before
+choosing a route. One `probeMediaFile` result selects video or audio-only input
+and also answers the audio player's has-audio check. The procedural demo and
+video always require a visual route. Audio requires one only when visual
+selection opened artwork or waveform.
+
+Forced render modes resolve without a probe or prompt. Visual playback then
+uses `resolveFallbackRenderMode` when fallback is forced or terminal detection
+reports missing placeholder support or a tmux/screen session. The kitty tier
+is skipped inside tmux/screen unless `--fallback --render-mode kitty` forces
+it. Declining the fallback prompt exits 0.
+
+Visual fallback uses `runFallbackPlayer` with a probe-free Screen and no Ink.
+The full visual route computes the panel region and awaits kitty-motion's
+`createScreen` before calling Ink's `render()`. This ordering is load-bearing
+because capability probes read stdin before Ink's `useInput` takes it over.
+The CLI then renders `Video` with externally owned resources. Audio-only
+playback without a source renders `AudioPlayerView`, or runs
+`runFallbackAudioPlayer` when fallback is forced.
 
 `Video` owns the playback clock, in the `usePlaybackClock` hook. A `setInterval` at the source frame rate lives outside React state, refs mirror `playing` and elapsed time as the source of truth for the interval callback, and an in-flight guard keeps async `getFrameAt` calls from piling up behind a slow source. A two-phase buffering gate holds the clock at startup, seeks, loop wraps, replays, resumes, and drift resyncs, retrying the gated position each tick: phase one waits for the frame at the playhead, phase two starts audio there and holds until the source's readahead is full (`FrameSource.isBuffering`) and the audio has made sound or reported it cannot (`AudioPlayer.isStarting`), so playback begins buffered, with picture, bar, and sound together, even when a remote URL takes seconds to deliver either. Every audio start goes through the gate. Each gate release also re-anchors the running clock to wall time, and ticks compute the playhead from that anchor rather than counting intervals, because a late timer fire permanently loses its lateness (1-2% under decode load) and a tick-counted clock drags behind the wall-paced audio until the drift snap fires forever. Once playing, a null frame still advances the clock (frames drop, playback stays realtime), and seeks move the playhead synchronously with a timeline bump so a stale fetch cannot clobber the new position. `runFallbackPlayer` ports the same gate and anchor. Frames go straight to `screen.pushFrame()`, bypassing React entirely, and React state (so an Ink redraw) updates only when the displayed whole second changes. On terminal resize Video debounces the stdout `resize` event, calls `screen.setRegion()` with a freshly computed panel region, RE-READS `screen.getPlaceholderRows()` (the grid size can change, so the old rows are stale), and repaints the current frame.
 
 `FrameSource` is the seam the ffmpeg decoder plugs into. It is a pull model: the player's clock requests frames by timestamp via `getFrameAt(timeMs)`, `null` means no frame is ready and the player keeps showing the last one, and returned buffers may be reused by the source (valid only until the next call). `seek(timeMs)` makes nearby reads cheap, `close()` is idempotent.
 
+`Audio` has no visual by default. When its `visual` prop enables one,
+`useManagedVisualResources` selects the source and creates a probe-free managed
+Screen after Ink owns stdin. `useAudioVisualRenderer` pumps frames directly to
+the Screen and blocks audio startup until the first frame or placeholder is
+ready. `width` and `height` size the whole component, including its optional
+controls row.
+
 ### Module map
 
 - `src/cli/` - executable bin entry (`index.tsx` runs the player on import, opening an `AudioPlayer` alongside the source for file arguments and forwarding `--muted`) plus `parseCliArgs.ts`, the exit codes, help text, and `VERSION`
 - `src/Video/` - the Ink component `Video`: playback clock in `usePlaybackClock.ts`, self-managed resource lifecycle in `useManagedResources.ts`, probe-free Screen construction in `managedScreen.ts`, plus the two-mode props union (external resources vs. self-managed)
+- `src/Audio/` - the Ink component `Audio`, its playback clock, managed audio and optional visual resources, and direct visual frame pumping
+- `src/audioVisual/` - normalizes visual selection and opens artwork, waveform, placeholder, or no visual
 - `src/frameSource/` - interface-only module holding the `FrameSource`/`FrameSourceInfo` contract (no implementation, no consts)
 - `src/audioPlayer/` - interface-only module holding the `AudioPlayer`/`AudioPlayerInfo` contract (no implementation, no consts)
 - `src/ffmpegAudioPlayer/` - decodes a file's audio track with a second bundled-ffmpeg process into an audify (RtAudio) output stream. playFrom respawns ffmpeg with `-ss` placed by the video decoder's seekability rules (see `src/ffmpegSource/`), pause kills the decoder and clears the device queue, mute sets the device volume to zero, and position is the playFrom offset plus device frames actually played, reported as null until the decoder's sound actually plays (a non-null frozen position would make the clock's drift snap kill a starting decoder every second, which silenced remote playback entirely). isStarting reports a live decode attempt with no sound out yet, which is what holds the clock's buffering gate, and flips false when the attempt's process exits so a dead attempt releases the gate instead of stalling it. Each start holds AUDIO_PREBUFFER_MS of PCM back from the device before releasing any of it, and AUDIO_QUEUE_CAP_MS sizes the steady-state backlog cushion that absorbs delivery hiccups without underrunning. Every failure resolves to silent playback, never a crash
 - `src/fallbackPlayer/` - fallback playback for terminals that cannot run the full Ink player. `resolveFallbackRenderMode` picks the mode (a forced mode wins untouched, a multiplexed session skips the probe and takes the cell mode, otherwise the kitty graphics probe decides, falling back to `detectCellRenderMode`, cell-background on Terminal.app, half-block elsewhere). Probe-free `createFallbackScreen` builds the Screen at that mode (full-screen, autoResize), and `runFallbackPlayer` is a React-free port of the playback clock with raw-stdin keys (space, arrows, m mute, q/Ctrl-C) and no Ink UI
+- `src/fallbackAudioPlayer/` - audio-only fallback clock and raw-stdin controls without Ink or a Screen
 - `src/proceduralSource/` - the built-in demo source, a hue-cycling ball on a Lissajous path rendered as a pure function of time into a reused framebuffer
 - `src/mediaProbe/` - classifies a file or URL with one ffprobe run: a real video stream (embedded cover art marked attached_pic does not count) makes it video, otherwise an audio stream makes it audio-only with the cover art dimensions when an attached picture exists, and neither rejects with NO_PLAYABLE_STREAMS. Owns the duration measurement fallback for live-muxed files, mapped to the probed stream kind. ffmpegSource accepts this probe pre-computed so the cli never probes a file twice
 - `src/coverArtSource/` - FrameSource showing an audio file's embedded cover art as a static image, decoded once at open with a one-shot ffmpeg run. getFrameAt always returns the frame (the clock's buffering gate retries at the playhead on startup, seeks, resumes, and drift resyncs, and would strand on a source that goes quiet), at a nominal 10 fps so identical pushes stay cheap. An undecodable picture rejects open and the cli falls back to the waveform
@@ -37,6 +75,7 @@ Data flow: `cli` parses argv (`parseCliArgs`, a pure function in its own file so
 ## Gotchas
 
 - **`createScreen` before Ink `render()`**: the kitty-motion capability probes read stdin, and Ink's `useInput` takes stdin after `render()`. Creating the Screen after rendering hangs or corrupts the probe handshake. The cli entry already does this in the right order, keep it that way
+- **Embedded managed Screens stay probe-free**: `Video` and optional `Audio` visuals create managed Screens after Ink owns stdin, so those paths must never run capability probes
 - **Re-read placeholder rows after `setRegion()`**: the placeholder grid size can change with the region, so cached rows go stale. The Player's resize effect calls `screen.getPlaceholderRows()` again after every `setRegion()`
 - **`minimumReleaseAge` install policy**: `pnpm-workspace.yaml` blocks package versions published less than 7 days ago, with `kitty-motion` excluded (our own package, every published version is newer than the cutoff). If `pnpm add` or `pnpm update` fails to resolve a brand-new release, pin an older version instead of fighting the resolver
 - **AGENTS.md is a symlink to CLAUDE.md**: edit CLAUDE.md only, never create a separate AGENTS.md
