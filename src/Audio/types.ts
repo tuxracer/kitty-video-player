@@ -53,6 +53,7 @@ export interface ManagedAudioVisualResources {
   info: FrameSourceInfo | null;
   screen: PlayerScreen | null;
   placeholderRows: string[];
+  regionRevision: number;
   degradeToPlaceholder(): void;
 }
 
@@ -73,6 +74,7 @@ export interface AudioVisualRendererOptions {
   getElapsedMs(): number;
   onReady(): void;
   onVisualError(error: unknown): void;
+  regionRevision?: number;
 }
 
 export interface AudioVisualRenderer {

@@ -543,6 +543,53 @@ describe('useManagedVisualResources', () => {
     view.unmount();
   });
 
+  it('degrades with the retained label when visual selection rejects', async () => {
+    audioVisualMocks.openAudioVisual.mockRejectedValue(new Error('visual selection failed'));
+    const resources = createRef<ManagedAudioVisualResources>();
+    const view = renderVisual(resources);
+    await settle();
+
+    expect(resources.current?.status).toBe('placeholder');
+    expect(resources.current?.label).toBe('Track');
+    expect(managedScreenMocks.createManagedScreen).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('closes the source when managed screen construction throws', async () => {
+    const visual = createFakeVisualSource();
+    audioVisualMocks.openAudioVisual.mockResolvedValue({ kind: 'source', visualKind: 'waveform', source: visual.source, info: VISUAL_INFO, label: 'Track' });
+    managedScreenMocks.createManagedScreen.mockImplementation(() => {
+      throw new Error('screen failed');
+    });
+    const resources = createRef<ManagedAudioVisualResources>();
+    const view = renderVisual(resources);
+    await settle();
+
+    expect(resources.current?.status).toBe('placeholder');
+    expect(resources.current?.label).toBe('Track');
+    expect(visual.closeCalls).toBe(1);
+    view.unmount();
+  });
+
+  it('disposes the screen and closes the source when placeholder rows throw', async () => {
+    const visual = createFakeVisualSource();
+    const screen = createFakeVisualScreen();
+    screen.screen.getPlaceholderRows = () => {
+      throw new Error('rows failed');
+    };
+    audioVisualMocks.openAudioVisual.mockResolvedValue({ kind: 'source', visualKind: 'waveform', source: visual.source, info: VISUAL_INFO, label: 'Track' });
+    managedScreenMocks.createManagedScreen.mockReturnValue(screen.screen);
+    const resources = createRef<ManagedAudioVisualResources>();
+    const view = renderVisual(resources);
+    await settle();
+
+    expect(resources.current?.status).toBe('placeholder');
+    expect(resources.current?.label).toBe('Track');
+    expect(screen.disposeCalls).toBe(1);
+    expect(visual.closeCalls).toBe(1);
+    view.unmount();
+  });
+
   it('replaces only visual resources when the visual mode changes', async () => {
     const audio = createFakeAudio();
     const firstVisual = createFakeVisualSource();
@@ -637,6 +684,65 @@ describe('useManagedVisualResources', () => {
     view.unmount();
   });
 
+  it('repaints the paused current frame after a region change', async () => {
+    const getFrameAt = vi.fn(() => Promise.resolve(new Uint8Array([1])));
+    const visual = createFakeVisualSource(getFrameAt);
+    const screen = createFakeVisualScreen();
+    audioVisualMocks.openAudioVisual.mockResolvedValue({ kind: 'source', visualKind: 'waveform', source: visual.source, info: VISUAL_INFO, label: 'Track' });
+    managedScreenMocks.createManagedScreen.mockReturnValue(screen.screen);
+
+    const ResizeHarness = ({ width }: { width: number }) => {
+      const managed = useManagedVisualResources({ enabled: true, src: 'song.mp3', probe: AUDIO_PROBE, mode: 'waveform', width, height: 12 });
+      useAudioVisualRenderer({
+        source: managed.source,
+        info: managed.info,
+        screen: managed.screen,
+        playing: false,
+        getElapsedMs: () => 750,
+        onReady: () => undefined,
+        onVisualError: managed.degradeToPlaceholder,
+        regionRevision: managed.regionRevision,
+      });
+      return null;
+    };
+    const view = render(<ResizeHarness width={40} />);
+    await settle();
+    getFrameAt.mockClear();
+    screen.pushedFrames.length = 0;
+    screen.rows = ['resized-row'];
+
+    view.rerender(<ResizeHarness width={20} />);
+    await settle();
+
+    expect(screen.regions.at(-1)).toEqual({ offsetCol: 1, offsetRow: 1, cols: 20, rows: 5 });
+    expect(getFrameAt).toHaveBeenCalledWith(750);
+    expect(screen.pushedFrames).toEqual([new Uint8Array([1])]);
+    view.unmount();
+  });
+
+  it('does not resize a disposed screen during simultaneous visual and dimension replacement', async () => {
+    const firstVisual = createFakeVisualSource();
+    const firstScreen = createFakeVisualScreen();
+    const replacement = createDeferred<AudioVisualSelection>();
+    audioVisualMocks.openAudioVisual
+      .mockResolvedValueOnce({ kind: 'source', visualKind: 'waveform', source: firstVisual.source, info: VISUAL_INFO, label: 'Track' })
+      .mockReturnValueOnce(replacement.promise);
+    managedScreenMocks.createManagedScreen.mockReturnValue(firstScreen.screen);
+    const resources = createRef<ManagedAudioVisualResources>();
+    const view = renderVisual(resources);
+    await settle();
+    const regionCalls = firstScreen.regions.length;
+
+    view.rerender(
+      <VisualResourcesHarness ref={resources} enabled src="song.mp3" probe={AUDIO_PROBE} mode="artwork" width={20} height={8} />,
+    );
+    await settle();
+
+    expect(firstScreen.disposeCalls).toBe(1);
+    expect(firstScreen.regions).toHaveLength(regionCalls);
+    view.unmount();
+  });
+
   it('routes renderer failures to visual degradation without reporting a media error', async () => {
     const failure = new Error('visual frame failed');
     const visual = createFakeVisualSource(() => Promise.reject(failure));
@@ -714,6 +820,31 @@ describe('useAudioVisualRenderer', () => {
     await flush();
     await advance(40);
     expect(getFrameAt).toHaveBeenCalledTimes(2);
+    view.unmount();
+  });
+
+  it('queues a region repaint behind an in-flight paused frame', async () => {
+    const firstFrame = createDeferred<Uint8Array | null>();
+    const getFrameAt = vi
+      .fn<FrameSource['getFrameAt']>()
+      .mockReturnValueOnce(firstFrame.promise)
+      .mockResolvedValue(new Uint8Array([2]));
+    const visual = createFakeVisualSource(getFrameAt);
+    const screen = createFakeVisualScreen();
+    const view = render(
+      <VisualRendererHarness source={visual.source} info={VISUAL_INFO} screen={screen.screen} playing={false} getElapsedMs={() => 750} onReady={vi.fn()} onVisualError={vi.fn()} regionRevision={0} />,
+    );
+
+    view.rerender(
+      <VisualRendererHarness source={visual.source} info={VISUAL_INFO} screen={screen.screen} playing={false} getElapsedMs={() => 750} onReady={vi.fn()} onVisualError={vi.fn()} regionRevision={1} />,
+    );
+    await flush();
+    expect(getFrameAt).toHaveBeenCalledTimes(1);
+
+    firstFrame.resolve(new Uint8Array([1]));
+    await flush();
+    expect(getFrameAt).toHaveBeenCalledTimes(2);
+    expect(getFrameAt).toHaveBeenLastCalledWith(750);
     view.unmount();
   });
 

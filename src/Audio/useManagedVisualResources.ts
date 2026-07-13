@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { openAudioVisual } from '../audioVisual/index.ts';
+import { openAudioVisual, resolveAudioPlaceholderLabel } from '../audioVisual/index.ts';
 import type { FrameSource } from '../frameSource/index.ts';
 import { computeEmbeddedRegion } from '../playerLayout/index.ts';
 import { canDisplayVideo, createManagedScreen } from '../Video/managedScreen.ts';
@@ -22,8 +22,14 @@ const releaseVisualResources = (owned: OwnedVisualResources): void => {
     return;
   }
   owned.released = true;
-  owned.screen?.dispose();
-  void owned.source.close().catch(() => undefined);
+  try {
+    owned.screen?.dispose();
+  } catch {
+    // Continue releasing the source when screen disposal fails.
+  }
+  void Promise.resolve()
+    .then(() => owned.source.close())
+    .catch(() => undefined);
 };
 
 export const useManagedVisualResources = ({
@@ -55,6 +61,7 @@ export const useManagedVisualResources = ({
       info: null,
       screen: null,
       placeholderRows: [],
+      regionRevision: 0,
       degradeToPlaceholder,
     });
   }, []);
@@ -72,6 +79,7 @@ export const useManagedVisualResources = ({
         info: null,
         screen: null,
         placeholderRows: [],
+        regionRevision: 0,
         degradeToPlaceholder,
       });
       return;
@@ -81,79 +89,113 @@ export const useManagedVisualResources = ({
       return;
     }
 
+    const fallbackLabel = resolveAudioPlaceholderLabel(src, probe.title);
+    labelRef.current = fallbackLabel;
     setResources({ ...INITIAL_MANAGED_AUDIO_VISUAL_RESOURCES, degradeToPlaceholder });
-    void openAudioVisual({ filePath: src, probe, mode }).then((selection) => {
-      if (cancelled) {
-        if (selection.kind === 'source') {
-          void selection.source.close().catch(() => undefined);
+    let selectedLabel = fallbackLabel;
+    void Promise.resolve()
+      .then(() => openAudioVisual({ filePath: src, probe, mode }))
+      .then((selection) => {
+        if (cancelled) {
+          if (selection.kind === 'source') {
+            void Promise.resolve()
+              .then(() => selection.source.close())
+              .catch(() => undefined);
+          }
+          return;
         }
-        return;
-      }
-      if (selection.kind === 'none') {
-        labelRef.current = null;
-        setResources({
-          status: 'none',
-          label: null,
-          source: null,
-          info: null,
-          screen: null,
-          placeholderRows: [],
-          degradeToPlaceholder,
-        });
-        return;
-      }
-      labelRef.current = selection.label;
-      if (selection.kind === 'placeholder') {
-        setResources({
-          status: 'placeholder',
-          label: selection.label,
-          source: null,
-          info: null,
-          screen: null,
-          placeholderRows: [],
-          degradeToPlaceholder,
-        });
-        return;
-      }
+        if (selection.kind === 'none') {
+          labelRef.current = null;
+          setResources({
+            status: 'none',
+            label: null,
+            source: null,
+            info: null,
+            screen: null,
+            placeholderRows: [],
+            regionRevision: 0,
+            degradeToPlaceholder,
+          });
+          return;
+        }
+        labelRef.current = selection.label;
+        selectedLabel = selection.label;
+        if (selection.kind === 'placeholder') {
+          setResources({
+            status: 'placeholder',
+            label: selection.label,
+            source: null,
+            info: null,
+            screen: null,
+            placeholderRows: [],
+            regionRevision: 0,
+            degradeToPlaceholder,
+          });
+          return;
+        }
 
-      owned = { source: selection.source, screen: null, released: false };
-      if (!canDisplayVideo()) {
-        releaseVisualResources(owned);
+        owned = { source: selection.source, screen: null, released: false };
+        if (!canDisplayVideo()) {
+          releaseVisualResources(owned);
+          setResources({
+            status: 'placeholder',
+            label: selection.label,
+            source: null,
+            info: null,
+            screen: null,
+            placeholderRows: [],
+            regionRevision: 0,
+            degradeToPlaceholder,
+          });
+          return;
+        }
+        const region = computeEmbeddedRegion({
+          cols: sizeRef.current.width,
+          rows: sizeRef.current.height,
+          sourceWidth: selection.info.width,
+          sourceHeight: selection.info.height,
+        });
+        const screen = createManagedScreen({
+          region,
+          sourceWidth: selection.info.width,
+          sourceHeight: selection.info.height,
+          colorSpace: selection.info.colorSpace,
+        });
+        owned.screen = screen;
+        ownedRef.current = owned;
+        setResources({
+          status: 'ready',
+          label: selection.label,
+          source: selection.source,
+          info: selection.info,
+          screen,
+          placeholderRows: screen.getPlaceholderRows(),
+          regionRevision: 0,
+          degradeToPlaceholder,
+        });
+      })
+      .catch(() => {
+        if (owned !== null) {
+          releaseVisualResources(owned);
+          if (ownedRef.current === owned) {
+            ownedRef.current = null;
+          }
+        }
+        if (cancelled) {
+          return;
+        }
+        labelRef.current = selectedLabel;
         setResources({
           status: 'placeholder',
-          label: selection.label,
+          label: selectedLabel,
           source: null,
           info: null,
           screen: null,
           placeholderRows: [],
+          regionRevision: 0,
           degradeToPlaceholder,
         });
-        return;
-      }
-      const region = computeEmbeddedRegion({
-        cols: sizeRef.current.width,
-        rows: sizeRef.current.height,
-        sourceWidth: selection.info.width,
-        sourceHeight: selection.info.height,
       });
-      const screen = createManagedScreen({
-        region,
-        sourceWidth: selection.info.width,
-        sourceHeight: selection.info.height,
-        colorSpace: selection.info.colorSpace,
-      });
-      owned.screen = screen;
-      ownedRef.current = owned;
-      setResources({
-        status: 'ready',
-        label: selection.label,
-        source: selection.source,
-        info: selection.info,
-        screen,
-        placeholderRows: screen.getPlaceholderRows(),
-        degradeToPlaceholder,
-      });
-    });
 
     return () => {
       cancelled = true;
@@ -171,19 +213,31 @@ export const useManagedVisualResources = ({
       return;
     }
     const screen = resources.screen;
-    screen.setRegion(
-      computeEmbeddedRegion({
-        cols: width,
-        rows: height,
-        sourceWidth: resources.info.width,
-        sourceHeight: resources.info.height,
-      }),
-    );
-    const placeholderRows = screen.getPlaceholderRows();
-    setResources((current) =>
-      current.screen === screen ? { ...current, placeholderRows } : current,
-    );
-  }, [height, resources.info, resources.screen, width]);
+    const owned = ownedRef.current;
+    if (owned === null || owned.released || owned.screen !== screen) {
+      return;
+    }
+    try {
+      screen.setRegion(
+        computeEmbeddedRegion({
+          cols: width,
+          rows: height,
+          sourceWidth: resources.info.width,
+          sourceHeight: resources.info.height,
+        }),
+      );
+      const placeholderRows = screen.getPlaceholderRows();
+      setResources((current) =>
+        current.screen === screen && ownedRef.current === owned && !owned.released
+          ? { ...current, placeholderRows, regionRevision: current.regionRevision + 1 }
+          : current,
+      );
+    } catch {
+      if (ownedRef.current === owned) {
+        degradeToPlaceholder();
+      }
+    }
+  }, [degradeToPlaceholder, height, resources.info, resources.screen, width]);
 
   return resources;
 };

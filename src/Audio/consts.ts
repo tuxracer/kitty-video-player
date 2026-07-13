@@ -27,5 +27,6 @@ export const INITIAL_MANAGED_AUDIO_VISUAL_RESOURCES: ManagedAudioVisualResources
   info: null,
   screen: null,
   placeholderRows: [],
+  regionRevision: 0,
   degradeToPlaceholder: () => undefined,
 };

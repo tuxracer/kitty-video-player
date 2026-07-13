@@ -11,10 +11,12 @@ export const useAudioVisualRenderer = ({
   getElapsedMs,
   onReady,
   onVisualError,
+  regionRevision = 0,
 }: AudioVisualRendererOptions): AudioVisualRenderer => {
   const [ready, setReady] = useState(false);
   const timelineRef = useRef(0);
-  const requestRef = useRef<() => void>(() => undefined);
+  const requestRef = useRef<(queue?: boolean) => void>(() => undefined);
+  const regionRef = useRef({ source, screen, revision: regionRevision });
   const callbacksRef = useRef({ getElapsedMs, onReady, onVisualError });
   callbacksRef.current = { getElapsedMs, onReady, onVisualError };
 
@@ -22,6 +24,7 @@ export const useAudioVisualRenderer = ({
     timelineRef.current += 1;
     const timeline = timelineRef.current;
     let inFlight = false;
+    let repaintPending = false;
     let stopped = false;
     let sourceReady = false;
     setReady(false);
@@ -31,8 +34,12 @@ export const useAudioVisualRenderer = ({
       return;
     }
 
-    const requestFrame = (): void => {
-      if (stopped || inFlight || !screen.isWritable()) {
+    const requestFrame = (queue = false): void => {
+      if (stopped || !screen.isWritable()) {
+        return;
+      }
+      if (inFlight) {
+        repaintPending ||= queue;
         return;
       }
       inFlight = true;
@@ -60,6 +67,10 @@ export const useAudioVisualRenderer = ({
         })
         .finally(() => {
           inFlight = false;
+          if (repaintPending) {
+            repaintPending = false;
+            requestFrame();
+          }
         });
     };
     requestRef.current = requestFrame;
@@ -81,7 +92,19 @@ export const useAudioVisualRenderer = ({
     return () => clearInterval(interval);
   }, [info, playing]);
 
-  const repaint = useCallback((): void => requestRef.current(), []);
+  useEffect(() => {
+    const previous = regionRef.current;
+    regionRef.current = { source, screen, revision: regionRevision };
+    if (
+      previous.source === source &&
+      previous.screen === screen &&
+      previous.revision !== regionRevision
+    ) {
+      requestRef.current(true);
+    }
+  }, [regionRevision, screen, source]);
+
+  const repaint = useCallback((): void => requestRef.current(true), []);
 
   return { ready, repaint };
 };
