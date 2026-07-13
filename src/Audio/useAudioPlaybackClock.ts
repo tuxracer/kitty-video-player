@@ -67,9 +67,15 @@ export const useAudioPlaybackClock = ({
   );
 
   const startAt = useCallback((targetMs: number): void => {
+    if (audioRef.current === null) {
+      waitingRef.current = false;
+      setBuffering(false);
+      anchorRef.current = { wallMs: Date.now(), elapsedMs: targetMs };
+      return;
+    }
     waitingRef.current = true;
     setBuffering(true);
-    audioRef.current?.playFrom(targetMs);
+    audioRef.current.playFrom(targetMs);
   }, []);
 
   const pause = useCallback((): void => {
@@ -109,7 +115,6 @@ export const useAudioPlaybackClock = ({
     if (
       transportRevisionRef.current === transportRevision &&
       !startBlockedRef.current &&
-      audioRef.current !== null &&
       durationRef.current !== null
     ) {
       startAt(elapsedRef.current);
@@ -151,8 +156,11 @@ export const useAudioPlaybackClock = ({
   );
 
   const releaseStart = useCallback((): void => {
+    if (!startBlockedRef.current) {
+      return;
+    }
     startBlockedRef.current = false;
-    if (playingRef.current && audioRef.current !== null && durationRef.current !== null) {
+    if (playingRef.current && durationRef.current !== null) {
       startAt(elapsedRef.current);
     }
   }, [startAt]);
@@ -166,7 +174,7 @@ export const useAudioPlaybackClock = ({
     setBuffering(false);
     startBlockedRef.current = startBlocked;
 
-    if (audio === null || durationMs === null) {
+    if (durationMs === null) {
       return () => {
         audio?.pause();
       };
@@ -177,11 +185,11 @@ export const useAudioPlaybackClock = ({
     }
 
     const interval = setInterval(() => {
-      if (!playingRef.current || audioRef.current === null || durationRef.current === null) {
+      if (!playingRef.current || startBlockedRef.current || durationRef.current === null) {
         return;
       }
       if (waitingRef.current) {
-        if (audioRef.current.isStarting()) {
+        if (audioRef.current?.isStarting() ?? false) {
           return;
         }
         waitingRef.current = false;
@@ -201,7 +209,7 @@ export const useAudioPlaybackClock = ({
           return;
         }
         if (nextSecond !== previousSecond) {
-          const audioPositionMs = audioRef.current.getPositionMs();
+          const audioPositionMs = audioRef.current?.getPositionMs() ?? null;
           if (
             audioPositionMs !== null &&
             Math.abs(audioPositionMs - nextMs) > DRIFT_RESYNC_THRESHOLD_MS
@@ -237,13 +245,13 @@ export const useAudioPlaybackClock = ({
       callbacksRef.current.onPause?.();
       callbacksRef.current.onEnded?.();
       if (!readPlaying()) {
-        audioRef.current.pause();
+        audioRef.current?.pause();
       }
     }, AUDIO_TICK_MS);
 
     return () => {
       clearInterval(interval);
-      audio.pause();
+      audio?.pause();
     };
   }, [audio, durationMs, readPlaying, setPlayhead, startAt, startBlocked]);
 

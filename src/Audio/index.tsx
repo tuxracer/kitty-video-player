@@ -1,27 +1,20 @@
-import { ProgressBar, Spinner } from '@inkjs/ui';
-import { Box, Text, useApp, useInput } from 'ink';
 import type { ReactElement } from 'react';
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef } from 'react';
 
-import { formatTime } from '../formatTime/index.ts';
+import { normalizeAudioVisual } from '../audioVisual/index.ts';
+import { AudioPlayerView } from './AudioPlayerView.tsx';
 import {
-  BUFFERING_TEXT,
-  LOADING_DELAY_MS,
-  LOADING_TEXT,
-  MIN_PROGRESS_BAR_WIDTH,
-  MS_PER_SECOND,
-  PAUSE_GLYPH,
-  PERCENT_MAX,
-  PLAY_GLYPH,
-  PROGRESS_BAR_WIDTH,
-  SEEK_STEP_MS,
+  CONTROLS_ROWS,
+  DEFAULT_VISUAL_HEIGHT,
+  DEFAULT_VISUAL_WIDTH,
 } from './consts.ts';
 import type { AudioProps, AudioRef } from './types.ts';
-import { useAudioPlaybackClock } from './useAudioPlaybackClock.ts';
 import { useManagedResources } from './useManagedResources.ts';
+import { useManagedVisualResources } from './useManagedVisualResources.ts';
 
 export * from './consts.ts';
 export * from './types.ts';
+export { AudioPlayerView } from './AudioPlayerView.tsx';
 export { useAudioPlaybackClock } from './useAudioPlaybackClock.ts';
 export { useManagedResources } from './useManagedResources.ts';
 
@@ -29,11 +22,9 @@ export const Audio = forwardRef<AudioRef, AudioProps>((props, ref): ReactElement
   const {
     autoPlay = false,
     loop = false,
-    muted: initialMuted = false,
+    muted = false,
     controls = true,
     keyboard = false,
-    width,
-    height = 1,
     children,
     onTimeUpdate,
     onLoadedMetadata,
@@ -42,215 +33,53 @@ export const Audio = forwardRef<AudioRef, AudioProps>((props, ref): ReactElement
     onEnded,
     onError,
   } = props;
+  const visualMode = normalizeAudioVisual(props.visual ?? false);
+  const visualEnabled = visualMode !== 'none';
+  const width = props.width ?? (visualEnabled ? DEFAULT_VISUAL_WIDTH : undefined);
+  const height = props.height ?? (visualEnabled ? DEFAULT_VISUAL_HEIGHT : CONTROLS_ROWS);
+  const visualHeight = Math.max(0, height - (controls ? CONTROLS_ROWS : 0));
   const managed = useManagedResources({ src: props.src, onError });
-  const [muted, setMuted] = useState(initialMuted);
-  const mutedRef = useRef(initialMuted);
-  const durationRef = useRef<number | null>(null);
-  const autoPlayRef = useRef(autoPlay);
-  autoPlayRef.current = autoPlay;
-  const metadataCallbackRef = useRef(onLoadedMetadata);
-  metadataCallbackRef.current = onLoadedMetadata;
-  const dispatchingMetadataRef = useRef(false);
-  const metadataTransportRevisionRef = useRef(0);
-  const metadataAutoplaySupersededRevisionRef = useRef(0);
-  const hasLoadedMetadataRef = useRef(false);
-  const clock = useAudioPlaybackClock({
-    audio: managed.audio,
-    durationMs: managed.durationMs,
-    autoPlay: false,
-    loop,
-    startBlocked: true,
-    onTimeUpdate,
-    onPlay,
-    onPause,
-    onEnded,
-    onError,
+  const visual = useManagedVisualResources({
+    enabled: visualEnabled && visualHeight > 0,
+    src: props.src,
+    probe: managed.probe,
+    mode: visualMode,
+    width: width ?? DEFAULT_VISUAL_WIDTH,
+    height: visualHeight,
   });
-  durationRef.current = managed.durationMs;
-  const {
-    play: playClock,
-    pause: pauseClock,
-    seekToMs: seekClockToMs,
-    releaseStart,
-    getElapsedMs,
-  } = clock;
-
-  const updateMuted = useCallback((value: boolean): void => {
-    mutedRef.current = value;
-    setMuted(value);
-  }, []);
-  const playAudio = useCallback((): void => {
-    if (dispatchingMetadataRef.current) {
-      metadataTransportRevisionRef.current += 1;
-      metadataAutoplaySupersededRevisionRef.current = metadataTransportRevisionRef.current;
-    }
-    playClock();
-  }, [playClock]);
-  const pauseAudio = useCallback((): void => {
-    if (dispatchingMetadataRef.current) {
-      metadataTransportRevisionRef.current += 1;
-      metadataAutoplaySupersededRevisionRef.current = metadataTransportRevisionRef.current;
-    }
-    pauseClock();
-  }, [pauseClock]);
-  const seekAudioToMs = useCallback(
-    (targetMs: number): void => {
-      if (dispatchingMetadataRef.current) {
-        metadataTransportRevisionRef.current += 1;
-      }
-      seekClockToMs(targetMs);
-    },
-    [seekClockToMs],
-  );
-
-  useEffect(() => managed.audio?.setMuted(muted), [managed.audio, muted]);
-  useEffect(() => updateMuted(initialMuted), [initialMuted, updateMuted]);
-  useEffect(() => {
-    if (managed.audio === null || managed.durationMs === null) {
-      return;
-    }
-    const initialLoad = !hasLoadedMetadataRef.current;
-    const transportRevision = metadataTransportRevisionRef.current;
-    dispatchingMetadataRef.current = true;
-    try {
-      metadataCallbackRef.current?.({ duration: managed.durationMs / MS_PER_SECOND });
-    } finally {
-      dispatchingMetadataRef.current = false;
-    }
-    hasLoadedMetadataRef.current = true;
-    releaseStart();
-    if (
-      initialLoad &&
-      autoPlayRef.current &&
-      metadataAutoplaySupersededRevisionRef.current <= transportRevision
-    ) {
-      playClock();
-    }
-  }, [managed.audio, managed.durationMs, playClock, releaseStart]);
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      play: (): Promise<void> => {
-        playAudio();
-        return Promise.resolve();
-      },
-      pause: pauseAudio,
-      get currentTime(): number {
-        return getElapsedMs() / MS_PER_SECOND;
-      },
-      set currentTime(seconds: number) {
-        seekAudioToMs(seconds * MS_PER_SECOND);
-      },
-      get paused(): boolean {
-        return !clock.playing;
-      },
-      get ended(): boolean {
-        return clock.ended;
-      },
-      get muted(): boolean {
-        return mutedRef.current;
-      },
-      set muted(value: boolean) {
-        updateMuted(value);
-      },
-      get duration(): number {
-        return durationRef.current === null ? Number.NaN : durationRef.current / MS_PER_SECOND;
-      },
-    }),
-    [clock, getElapsedMs, pauseAudio, playAudio, seekAudioToMs, updateMuted],
-  );
-
-  const { exit } = useApp();
-  useInput(
-    (input, key) => {
-      if (input === 'q' || (key.ctrl && input === 'c')) {
-        void managed.audio?.close().catch(() => undefined);
-        exit();
-        return;
-      }
-      if (input === ' ') {
-        clock.togglePlay();
-        return;
-      }
-      if (input === 'm') {
-        updateMuted(!mutedRef.current);
-        return;
-      }
-      if (key.leftArrow) {
-        clock.seekToMs(clock.getElapsedMs() - SEEK_STEP_MS);
-        return;
-      }
-      if (key.rightArrow) {
-        clock.seekToMs(clock.getElapsedMs() + SEEK_STEP_MS);
-      }
-    },
-    { isActive: keyboard && managed.status === 'ready' },
-  );
-
-  const [showLoading, setShowLoading] = useState(false);
-  useEffect(() => {
-    if (!controls || managed.status !== 'loading') {
-      setShowLoading(false);
-      return;
-    }
-    const timer = setTimeout(() => setShowLoading(true), LOADING_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [controls, managed.status]);
-
-  const [showBuffering, setShowBuffering] = useState(false);
-  useEffect(() => {
-    if (!controls || !clock.buffering) {
-      setShowBuffering(false);
-      return;
-    }
-    const timer = setTimeout(() => setShowBuffering(true), LOADING_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [clock.buffering, controls]);
-
-  if (managed.status === 'error') {
-    return <>{children}</>;
-  }
-  if (!controls) {
-    return null;
-  }
-  if (managed.status === 'loading') {
-    return (
-      <Box width={width} height={height} justifyContent="center" alignItems="center">
-        {showLoading ? <Spinner label={LOADING_TEXT} /> : null}
-      </Box>
-    );
-  }
-
-  const durationMs = managed.durationMs ?? 0;
-  const progressPercent =
-    durationMs > 0
-      ? Math.min(Math.max(Math.round((clock.elapsedMs / durationMs) * PERCENT_MAX), 0), PERCENT_MAX)
-      : 0;
-  const timeText = `${formatTime(clock.elapsedMs)} / ${formatTime(durationMs)}`;
-  const fixedWidth = PLAY_GLYPH.length + 1 + 1 + timeText.length;
-  const progressWidth =
-    width === undefined ? PROGRESS_BAR_WIDTH : Math.max(width - fixedWidth, MIN_PROGRESS_BAR_WIDTH);
-  const effectiveWidth = width === undefined ? undefined : fixedWidth + progressWidth;
 
   return (
-    <Box height={height} flexDirection="column" justifyContent="center">
-      <Box>
-        <Box width={effectiveWidth}>
-          <Text>{clock.playing ? PLAY_GLYPH : PAUSE_GLYPH} </Text>
-          <Box width={progressWidth}>
-            {showBuffering ? (
-              <Spinner
-                label={progressWidth >= BUFFERING_TEXT.length + 2 ? BUFFERING_TEXT : undefined}
-              />
-            ) : (
-              <ProgressBar value={progressPercent} />
-            )}
-          </Box>
-          <Text> {timeText}</Text>
-        </Box>
-      </Box>
-    </Box>
+    <AudioPlayerView
+      ref={ref}
+      audio={managed.audio}
+      durationMs={managed.durationMs}
+      resourceStatus={managed.status}
+      autoPlay={autoPlay}
+      loop={loop}
+      muted={muted}
+      controls={controls}
+      keyboard={keyboard}
+      width={width}
+      height={height}
+      visualStatus={visualEnabled && visualHeight > 0 ? visual.status : 'none'}
+      visualSource={visualEnabled && visualHeight > 0 ? visual.source : null}
+      visualInfo={visualEnabled && visualHeight > 0 ? visual.info : null}
+      visualScreen={visualEnabled && visualHeight > 0 ? visual.screen : null}
+      visualRows={visualEnabled && visualHeight > 0 ? visual.placeholderRows : []}
+      visualLabel={visualEnabled && visualHeight > 0 ? visual.label : null}
+      onVisualError={visual.degradeToPlaceholder}
+      onLoadedMetadata={onLoadedMetadata}
+      onQuit={() => {
+        void managed.audio?.close().catch(() => undefined);
+      }}
+      onTimeUpdate={onTimeUpdate}
+      onPlay={onPlay}
+      onPause={onPause}
+      onEnded={onEnded}
+      onError={onError}
+    >
+      {children}
+    </AudioPlayerView>
   );
 });
 

@@ -24,6 +24,7 @@ import type {
   AudioRef,
   AudioPlaybackClock,
   AudioPlaybackClockOptions,
+  AudioPlayerViewProps,
   AudioVisualRenderer,
   AudioVisualRendererOptions,
   ManagedAudioVisualResources,
@@ -31,7 +32,7 @@ import type {
   ManagedAudioResources,
   ManagedAudioResourcesOptions,
 } from './types.ts';
-import { Audio } from './index.tsx';
+import { Audio, AudioPlayerView } from './index.tsx';
 import { useAudioPlaybackClock } from './useAudioPlaybackClock.ts';
 import { useAudioVisualRenderer } from './useAudioVisualRenderer.ts';
 import { useManagedResources } from './useManagedResources.ts';
@@ -890,6 +891,163 @@ describe('useAudioVisualRenderer', () => {
   });
 });
 
+describe('AudioPlayerView', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  const viewProps = (
+    overrides: Partial<AudioPlayerViewProps> = {},
+  ): AudioPlayerViewProps => ({
+    audio: null,
+    durationMs: 2_000,
+    resourceStatus: 'ready',
+    autoPlay: false,
+    loop: false,
+    muted: false,
+    controls: true,
+    keyboard: false,
+    height: 1,
+    visualStatus: 'none',
+    visualSource: null,
+    visualInfo: null,
+    visualScreen: null,
+    visualRows: [],
+    visualLabel: null,
+    onVisualError: () => undefined,
+    ...overrides,
+  });
+
+  it('runs transport, time rendering, seek, and loop from the wall clock without audio', async () => {
+    const ref = createRef<AudioRef>();
+    const view = render(<AudioPlayerView ref={ref} {...viewProps({ autoPlay: true, loop: true })} />);
+    await flush();
+    await advance(1_050);
+    expect(ref.current?.currentTime).toBeCloseTo(1.05, 1);
+    expect(view.lastFrame()).toContain('0:01 / 0:02');
+
+    ref.current!.currentTime = 1.75;
+    expect(ref.current?.currentTime).toBe(1.75);
+    await advance(350);
+    expect(ref.current?.paused).toBe(false);
+    expect(ref.current!.currentTime).toBeLessThan(0.2);
+    view.unmount();
+  });
+
+  it('waits for metadata and the first buffered visual frame before autoplay starts', async () => {
+    const audio = createFakeAudio();
+    const firstFrame = createDeferred<Uint8Array | null>();
+    const visual = createFakeVisualSource(() => firstFrame.promise);
+    const screen = createFakeVisualScreen();
+    const view = render(
+      <AudioPlayerView
+        {...viewProps({
+          audio: audio.audio,
+          autoPlay: true,
+          visualStatus: 'ready',
+          visualSource: visual.source,
+          visualInfo: VISUAL_INFO,
+          visualScreen: screen.screen,
+          visualRows: screen.rows,
+          height: 2,
+        })}
+      />,
+    );
+    await flush();
+    expect(audio.playFroms).toEqual([]);
+
+    firstFrame.resolve(new Uint8Array([1]));
+    await flush();
+    expect(audio.playFroms).toEqual([0]);
+    view.unmount();
+  });
+
+  it.each(['none', 'placeholder'] as const)(
+    'releases autoplay immediately for a %s visual outcome',
+    async (visualStatus) => {
+      const audio = createFakeAudio();
+      const view = render(
+        <AudioPlayerView
+          {...viewProps({
+            audio: audio.audio,
+            autoPlay: true,
+            visualStatus,
+            visualLabel: visualStatus === 'placeholder' ? 'Track' : null,
+          })}
+        />,
+      );
+      await flush();
+
+      expect(audio.playFroms).toEqual([0]);
+      view.unmount();
+    },
+  );
+
+  it('renders visual frames at ref time and repaints after seeks and resizes', async () => {
+    const times: number[] = [];
+    const visual = createFakeVisualSource((timeMs) => {
+      times.push(timeMs);
+      return Promise.resolve(new Uint8Array([1]));
+    });
+    const screen = createFakeVisualScreen();
+    const ref = createRef<AudioRef>();
+    const firstProps = viewProps({
+      visualStatus: 'ready',
+      visualSource: visual.source,
+      visualInfo: VISUAL_INFO,
+      visualScreen: screen.screen,
+      visualRows: screen.rows,
+      width: 30,
+      height: 8,
+    });
+    const view = render(<AudioPlayerView ref={ref} {...firstProps} />);
+    await flush();
+    times.length = 0;
+
+    ref.current!.currentTime = 1.25;
+    await flush();
+    expect(times.at(-1)).toBe(1_250);
+
+    view.rerender(<AudioPlayerView ref={ref} {...firstProps} width={40} />);
+    await flush();
+    expect(times.at(-1)).toBe(1_250);
+    view.unmount();
+  });
+
+  it('retains the previous frame when the visual source has no new frame', async () => {
+    const visual = createFakeVisualSource(
+      vi
+        .fn<FrameSource['getFrameAt']>()
+        .mockResolvedValueOnce(new Uint8Array([1]))
+        .mockResolvedValue(null),
+    );
+    const screen = createFakeVisualScreen();
+    const ref = createRef<AudioRef>();
+    const view = render(
+      <AudioPlayerView
+        ref={ref}
+        {...viewProps({
+          visualStatus: 'ready',
+          visualSource: visual.source,
+          visualInfo: VISUAL_INFO,
+          visualScreen: screen.screen,
+          visualRows: screen.rows,
+          height: 2,
+        })}
+      />,
+    );
+    await flush();
+    ref.current!.currentTime = 1;
+    await flush();
+
+    expect(screen.pushedFrames).toEqual([new Uint8Array([1])]);
+    view.unmount();
+  });
+});
+
 describe('Audio', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -898,6 +1056,130 @@ describe('Audio', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('lays out optional visuals and controls within the requested dimensions', async () => {
+    const harness = createFakeAudio();
+    mockSuccessfulLoad(harness, 20_000);
+    audioVisualMocks.openAudioVisual.mockResolvedValue({ kind: 'placeholder', label: 'Track' });
+
+    const controlsOnly = render(<Audio src="song.mp3" />);
+    const defaultVisual = render(<Audio src="song.mp3" visual />);
+    const artwork = render(<Audio src="song.mp3" visual="artwork" width={30} height={8} />);
+    const waveform = render(
+      <Audio
+        src="song.mp3"
+        visual="waveform"
+        controls={false}
+        width={30}
+        height={8}
+      />,
+    );
+    await flush();
+
+    expect(controlsOnly.lastFrame()?.split('\n')).toHaveLength(1);
+    expect(controlsOnly.lastFrame()).toHaveLength(47);
+    expect(defaultVisual.lastFrame()?.split('\n')).toHaveLength(13);
+    expect(defaultVisual.lastFrame()?.split('\n').at(5)?.trim()).toBe('Track');
+    expect(artwork.lastFrame()?.split('\n')).toHaveLength(8);
+    expect(artwork.lastFrame()?.split('\n').at(3)?.trim()).toBe('Track');
+    expect(waveform.lastFrame()?.split('\n')).toHaveLength(8);
+    expect(waveform.lastFrame()?.split('\n').at(3)?.trim()).toBe('Track');
+
+    controlsOnly.unmount();
+    defaultVisual.unmount();
+    artwork.unmount();
+    waveform.unmount();
+  });
+
+  it('gives a one-row component to controls and renders nothing with no content', async () => {
+    const harness = createFakeAudio();
+    mockSuccessfulLoad(harness, 20_000);
+    audioVisualMocks.openAudioVisual.mockResolvedValue({ kind: 'placeholder', label: 'Track' });
+    const controls = render(<Audio src="song.mp3" visual height={1} />);
+    const empty = render(<Audio src="song.mp3" controls={false} />);
+    await flush();
+
+    expect(controls.lastFrame()?.split('\n')).toHaveLength(1);
+    expect(controls.lastFrame()).not.toContain('Track');
+    expect(empty.lastFrame()).toBe('');
+    controls.unmount();
+    empty.unmount();
+  });
+
+  it('replaces only visual resources while preserving audio and playhead', async () => {
+    const audio = createFakeAudio();
+    const artwork = createFakeVisualSource();
+    const waveform = createFakeVisualSource();
+    const artworkScreen = createFakeVisualScreen();
+    const waveformScreen = createFakeVisualScreen();
+    mockSuccessfulLoad(audio, 20_000);
+    audioVisualMocks.openAudioVisual
+      .mockResolvedValueOnce({
+        kind: 'source',
+        visualKind: 'artwork',
+        source: artwork.source,
+        info: VISUAL_INFO,
+        label: 'Track',
+      })
+      .mockResolvedValueOnce({
+        kind: 'source',
+        visualKind: 'waveform',
+        source: waveform.source,
+        info: VISUAL_INFO,
+        label: 'Track',
+      });
+    managedScreenMocks.createManagedScreen
+      .mockReturnValueOnce(artworkScreen.screen)
+      .mockReturnValueOnce(waveformScreen.screen);
+    const ref = createRef<AudioRef>();
+    const view = render(<Audio ref={ref} src="song.mp3" visual="artwork" />);
+    await flush();
+    ref.current!.currentTime = 5;
+
+    view.rerender(<Audio ref={ref} src="song.mp3" visual="waveform" />);
+    await flush();
+
+    expect(mediaProbeMocks.probeMediaFile).toHaveBeenCalledOnce();
+    expect(ffmpegAudioMocks.createFfmpegAudioPlayer).toHaveBeenCalledOnce();
+    expect(artwork.closeCalls).toBe(1);
+    expect(artworkScreen.disposeCalls).toBe(1);
+    expect(audio.closeCalls).toBe(0);
+    expect(ref.current?.currentTime).toBe(5);
+    view.unmount();
+  });
+
+  it('degrades a failed runtime visual without pausing or reporting a media error', async () => {
+    const audio = createFakeAudio();
+    const failure = new Error('visual failed');
+    const visual = createFakeVisualSource(
+      vi
+        .fn<FrameSource['getFrameAt']>()
+        .mockResolvedValueOnce(new Uint8Array([1]))
+        .mockRejectedValue(failure),
+    );
+    const screen = createFakeVisualScreen();
+    mockSuccessfulLoad(audio, 20_000);
+    audioVisualMocks.openAudioVisual.mockResolvedValue({
+      kind: 'source',
+      visualKind: 'waveform',
+      source: visual.source,
+      info: VISUAL_INFO,
+      label: 'Track',
+    });
+    managedScreenMocks.createManagedScreen.mockReturnValue(screen.screen);
+    const onError = vi.fn();
+    const ref = createRef<AudioRef>();
+    const view = render(
+      <Audio ref={ref} src="song.mp3" visual="waveform" autoPlay onError={onError} />,
+    );
+    await flush();
+    await advance(100);
+
+    expect(view.lastFrame()).toContain('Track');
+    expect(ref.current?.paused).toBe(false);
+    expect(onError).not.toHaveBeenCalled();
+    view.unmount();
   });
 
   it('shows controls by default and hides them only when controls is false', async () => {

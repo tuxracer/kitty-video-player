@@ -12,6 +12,9 @@ export const PLAY_GLYPH = '▶';
 export const PAUSE_GLYPH = '⏸';
 export const LOADING_TEXT = 'loading audio…';
 export const BUFFERING_TEXT = 'buffering…';
+export const DEFAULT_VISUAL_WIDTH = 48;
+export const DEFAULT_VISUAL_HEIGHT = 13;
+export const CONTROLS_ROWS = 1;
 
 export const INITIAL_MANAGED_AUDIO_RESOURCES: ManagedAudioResources = {
   status: 'loading',

@@ -57,6 +57,8 @@ export type {
   ManagedAudioResourcesOptions,
   ManagedAudioStatus,
 } from './Audio/index.tsx';
+export { normalizeAudioVisual } from './audioVisual/index.ts';
+export type { AudioVisualMode, AudioVisualProp } from './audioVisual/index.ts';
 
 export type { FrameSource, FrameSourceInfo } from './frameSource/index.ts';
 

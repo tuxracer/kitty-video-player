@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 import type { AudioPlayer } from '../audioPlayer/index.ts';
-import type { AudioVisualMode } from '../audioVisual/index.ts';
+import type { AudioVisualMode, AudioVisualProp } from '../audioVisual/index.ts';
 import type { FrameSource, FrameSourceInfo } from '../frameSource/index.ts';
 import type { AudioProbeResult } from '../mediaProbe/index.ts';
 import type { PlayerScreen } from '../Video/index.tsx';
@@ -123,6 +123,7 @@ export interface AudioRef {
 
 export interface AudioProps extends AudioPlaybackCallbacks {
   src: string;
+  visual?: AudioVisualProp;
   autoPlay?: boolean;
   loop?: boolean;
   muted?: boolean;
@@ -132,4 +133,27 @@ export interface AudioProps extends AudioPlaybackCallbacks {
   height?: number;
   children?: ReactNode;
   onLoadedMetadata?: (event: AudioLoadedMetadataEvent) => void;
+}
+
+export interface AudioPlayerViewProps extends AudioPlaybackCallbacks {
+  audio: AudioPlayer | null;
+  durationMs: number | null;
+  resourceStatus: ManagedAudioStatus;
+  autoPlay: boolean;
+  loop: boolean;
+  muted: boolean;
+  controls: boolean;
+  keyboard: boolean;
+  width?: number;
+  height: number;
+  visualStatus: ManagedAudioVisualStatus;
+  visualSource: FrameSource | null;
+  visualInfo: FrameSourceInfo | null;
+  visualScreen: PlayerScreen | null;
+  visualRows: string[];
+  visualLabel: string | null;
+  onVisualError(error: unknown): void;
+  onLoadedMetadata?: (event: AudioLoadedMetadataEvent) => void;
+  onQuit?: () => void;
+  children?: ReactNode;
 }
