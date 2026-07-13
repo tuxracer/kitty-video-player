@@ -12,6 +12,7 @@ import { createScreen, detectCellPixelSize } from 'kitty-motion';
 
 import type { AudioPlayer } from '../audioPlayer/index.ts';
 import {
+  isAudioError,
   AudioPlayerView,
   CONTROLS_ROWS,
   DEFAULT_VISUAL_HEIGHT,
@@ -126,7 +127,9 @@ const loadingIndicator = args.file === undefined ? null : startLoadingIndicator(
 
 const reportError = (error: unknown): void => {
   const message =
-    isMediaProbeError(error) || isFfmpegSourceError(error) ? error.message : String(error);
+    isAudioError(error) || isMediaProbeError(error) || isFfmpegSourceError(error)
+      ? error.message
+      : String(error);
   process.stderr.write(`kitty-media-player: ${message}\n`);
 };
 

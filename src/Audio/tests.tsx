@@ -779,6 +779,54 @@ describe('useManagedVisualResources', () => {
     expect(visual.closeCalls).toBe(1);
     view.unmount();
   });
+
+  it.each([
+    ['screen writability', (_visual: FakeVisualSource, screen: FakeVisualScreen) => {
+      screen.screen.isWritable = () => {
+        throw new Error('writability failed');
+      };
+    }],
+    ['frame request', (visual: FakeVisualSource) => {
+      visual.source.getFrameAt = () => {
+        throw new Error('frame request failed');
+      };
+    }],
+  ] as const)('degrades a synchronous %s throw without failing audio', async (_name, arrange) => {
+    const visual = createFakeVisualSource();
+    const screen = createFakeVisualScreen();
+    const audio = createFakeAudio();
+    arrange(visual, screen);
+    mediaProbeMocks.probeMediaFile.mockResolvedValue(AUDIO_PROBE);
+    ffmpegAudioMocks.createFfmpegAudioPlayer.mockReturnValue(audio.audio);
+    audioVisualMocks.openAudioVisual.mockResolvedValue({ kind: 'source', visualKind: 'waveform', source: visual.source, info: VISUAL_INFO, label: 'Track' });
+    managedScreenMocks.createManagedScreen.mockReturnValue(screen.screen);
+    const resources = createRef<ManagedAudioVisualResources>();
+    const onMediaError = vi.fn();
+    const FailureHarness = forwardRef<ManagedAudioVisualResources>((_, ref) => {
+      const managedAudio = useManagedResources({ src: 'song.mp3', onError: onMediaError });
+      const managed = useManagedVisualResources({ enabled: true, src: 'song.mp3', probe: managedAudio.probe, mode: 'waveform', width: 40, height: 12 });
+      useAudioVisualRenderer({
+        source: managed.source,
+        info: managed.info,
+        screen: managed.screen,
+        playing: false,
+        getElapsedMs: () => 0,
+        onReady: () => undefined,
+        onVisualError: managed.degradeToPlaceholder,
+      });
+      useImperativeHandle(ref, () => managed, [managed]);
+      return null;
+    });
+    const view = render(<FailureHarness ref={resources} />);
+    await settle();
+
+    expect(resources.current?.status).toBe('placeholder');
+    expect(onMediaError).not.toHaveBeenCalled();
+    expect(audio.closeCalls).toBe(0);
+    expect(screen.disposeCalls).toBe(1);
+    expect(visual.closeCalls).toBe(1);
+    view.unmount();
+  });
 });
 
 describe('useAudioVisualRenderer', () => {
@@ -821,6 +869,59 @@ describe('useAudioVisualRenderer', () => {
     await flush();
     await advance(40);
     expect(getFrameAt).toHaveBeenCalledTimes(2);
+    view.unmount();
+  });
+
+  it('polls a default-paused visual until its first frame is ready', async () => {
+    const getFrameAt = vi
+      .fn<FrameSource['getFrameAt']>()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue(new Uint8Array([1]));
+    const visual = createFakeVisualSource(getFrameAt);
+    const screen = createFakeVisualScreen();
+    const onReady = vi.fn();
+    const view = render(
+      <VisualRendererHarness source={visual.source} info={VISUAL_INFO} screen={screen.screen} playing={false} getElapsedMs={() => 0} onReady={onReady} onVisualError={vi.fn()} />,
+    );
+
+    await flush();
+    expect(screen.pushedFrames).toEqual([]);
+    await advance(40);
+    expect(screen.pushedFrames).toEqual([new Uint8Array([1])]);
+    expect(onReady).toHaveBeenCalledOnce();
+
+    const readyCalls = getFrameAt.mock.calls.length;
+    await advance(120);
+    expect(getFrameAt).toHaveBeenCalledTimes(readyCalls);
+    view.unmount();
+  });
+
+  it('polls a paused replacement visual until its first frame is ready', async () => {
+    const initial = createFakeVisualSource();
+    const replacementFrame = vi
+      .fn<FrameSource['getFrameAt']>()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue(new Uint8Array([2]));
+    const replacement = createFakeVisualSource(replacementFrame);
+    const screen = createFakeVisualScreen();
+    const onReady = vi.fn();
+    const view = render(
+      <VisualRendererHarness source={initial.source} info={VISUAL_INFO} screen={screen.screen} playing={false} getElapsedMs={() => 500} onReady={onReady} onVisualError={vi.fn()} />,
+    );
+    await flush();
+    screen.pushedFrames.length = 0;
+    onReady.mockClear();
+
+    view.rerender(
+      <VisualRendererHarness source={replacement.source} info={VISUAL_INFO} screen={screen.screen} playing={false} getElapsedMs={() => 500} onReady={onReady} onVisualError={vi.fn()} />,
+    );
+    await flush();
+    expect(screen.pushedFrames).toEqual([]);
+    await advance(40);
+
+    expect(screen.pushedFrames).toEqual([new Uint8Array([2])]);
+    expect(replacementFrame).toHaveBeenLastCalledWith(500);
+    expect(onReady).toHaveBeenCalledOnce();
     view.unmount();
   });
 
@@ -889,6 +990,31 @@ describe('useAudioVisualRenderer', () => {
     expect(getFrameAt).toHaveBeenCalledOnce();
     view.unmount();
   });
+
+  it.each([
+    ['screen writability', (_visual: FakeVisualSource, screen: FakeVisualScreen) => {
+      screen.screen.isWritable = () => {
+        throw new Error('writability failed');
+      };
+    }],
+    ['frame request', (visual: FakeVisualSource) => {
+      visual.source.getFrameAt = () => {
+        throw new Error('frame request failed');
+      };
+    }],
+  ] as const)('reports a synchronous %s throw as a visual error', async (_name, arrange) => {
+    const visual = createFakeVisualSource();
+    const screen = createFakeVisualScreen();
+    const onVisualError = vi.fn();
+    arrange(visual, screen);
+    const view = render(
+      <VisualRendererHarness source={visual.source} info={VISUAL_INFO} screen={screen.screen} playing={false} getElapsedMs={() => 0} onReady={vi.fn()} onVisualError={onVisualError} />,
+    );
+    await flush();
+
+    expect(onVisualError).toHaveBeenCalledOnce();
+    view.unmount();
+  });
 });
 
 describe('AudioPlayerView', () => {
@@ -922,12 +1048,13 @@ describe('AudioPlayerView', () => {
     ...overrides,
   });
 
-  it('runs transport, time rendering, seek, and loop from the wall clock without audio', async () => {
+  it('runs transport, time rendering, seek, and loop with an open audio player', async () => {
+    const audio = createFakeAudio();
     const ref = createRef<AudioRef>();
-    const view = render(<AudioPlayerView ref={ref} {...viewProps({ autoPlay: true, loop: true })} />);
+    const view = render(<AudioPlayerView ref={ref} {...viewProps({ audio: audio.audio, autoPlay: true, loop: true })} />);
     await flush();
     await advance(1_050);
-    expect(ref.current?.currentTime).toBeCloseTo(1.05, 1);
+    expect(ref.current?.currentTime).toBeGreaterThanOrEqual(1);
     expect(view.lastFrame()).toContain('0:01 / 0:02');
 
     ref.current!.currentTime = 1.75;

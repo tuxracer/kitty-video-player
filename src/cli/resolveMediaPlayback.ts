@@ -1,7 +1,9 @@
 import { openAudioVisual } from '../audioVisual/index.ts';
+import { AudioError } from '../Audio/index.tsx';
 import { resolveFallbackRenderMode } from '../fallbackPlayer/index.ts';
 import { createProceduralSource } from '../proceduralSource/index.ts';
 import { detectFallbackReasons } from './detectFallbackReasons.ts';
+import { AUDIO_UNAVAILABLE_ERROR_MESSAGE } from './consts.ts';
 import { openMediaSource } from './openMediaSource.ts';
 import type {
   CliMediaPlayback,
@@ -46,6 +48,12 @@ export const resolveMediaPlayback = async (
     }),
     options.audio,
   ]);
+  if (audio === null) {
+    if (visual.kind === 'source') {
+      await visual.source.close().catch(() => undefined);
+    }
+    throw new AudioError('AUDIO_UNAVAILABLE', AUDIO_UNAVAILABLE_ERROR_MESSAGE);
+  }
   if (visual.kind === 'source') {
     return { kind: 'audio-visual', source: visual.source, info: visual.info, audio };
   }

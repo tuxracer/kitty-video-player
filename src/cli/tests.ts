@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LOADING_DELAY_MS } from '../Video/index.tsx';
+import { AudioError, isAudioError } from '../Audio/index.tsx';
 // Import from parseCliArgs.ts directly (not ./index.tsx) because importing
 // the entry module would run the CLI at module top level.
 import { parseCliArgs } from './parseCliArgs.ts';
@@ -483,6 +484,19 @@ describe('resolveMediaPlayback', () => {
     expect(openVideo).toHaveBeenCalledOnce();
   });
 
+  it('retains silent video degradation when audio output is unavailable', async () => {
+    const video = source();
+    const playback = await resolveMediaPlayback({
+      filePath: 'movie.mp4',
+      visual: 'auto',
+      probe: Promise.resolve(videoProbe),
+      audio: Promise.resolve(null),
+      openVideo: () => Promise.resolve({ source: video, info }),
+    });
+
+    expect(playback).toMatchObject({ kind: 'video', source: video, audio: null });
+  });
+
   it('opens the procedural source without waiting for file resources', async () => {
     const procedural = source();
     const createProceduralSource = vi.fn(() => procedural);
@@ -533,15 +547,42 @@ describe('resolveMediaPlayback', () => {
     expect(playback).toEqual({ kind: 'audio-only', durationMs: 2_000, audio, label: 'Track' });
   });
 
-  it('routes visual none to an unlabeled audio-only player', async () => {
-    const playback = await resolveMediaPlayback({
+  it('rejects unavailable audio output for audio-only media with a typed error', async () => {
+    const result = resolveMediaPlayback({
       filePath: 'song.mp3',
       visual: 'none',
       probe: Promise.resolve(audioProbe),
       audio: Promise.resolve(null),
       openVisual: () => Promise.resolve({ kind: 'none' }),
     });
-    expect(playback).toEqual({ kind: 'audio-only', durationMs: 2_000, audio: null, label: null });
+
+    await expect(result).rejects.toMatchObject({
+      name: 'AudioError',
+      code: 'AUDIO_UNAVAILABLE',
+      message: 'audio output is unavailable',
+    });
+    await result.catch((error: unknown) => expect(isAudioError(error)).toBe(true));
+  });
+
+  it('closes an opened audio visual before rejecting unavailable audio output', async () => {
+    const visual = source();
+    const close = vi.spyOn(visual, 'close');
+
+    await expect(resolveMediaPlayback({
+      filePath: 'song.mp3',
+      visual: 'waveform',
+      probe: Promise.resolve(audioProbe),
+      audio: Promise.resolve(null),
+      openVisual: () => Promise.resolve({
+        kind: 'source',
+        visualKind: 'waveform',
+        source: visual,
+        info,
+        label: 'Track',
+      }),
+    })).rejects.toMatchObject({ code: 'AUDIO_UNAVAILABLE' });
+
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it('passes the one resolved probe to visual selection', async () => {
@@ -551,7 +592,7 @@ describe('resolveMediaPlayback', () => {
       filePath: 'song.mp3',
       visual: 'none',
       probe: resolveProbe(),
-      audio: Promise.resolve(null),
+      audio: Promise.resolve(audio),
       openVisual,
     });
     expect(resolveProbe).toHaveBeenCalledOnce();
@@ -968,36 +1009,25 @@ describe('runCliPlayback', () => {
     expect(dependencies.runVisualFallback).toHaveBeenCalledOnce();
   });
 
-  it('renders audio-only playback after opening with null audio and no visual terminal work', async () => {
-    const playback = {
-      kind: 'audio-only' as const,
-      durationMs: 2_000,
-      audio: null,
-      label: 'Track',
-    };
+  it('routes unavailable audio-only output through opening cleanup and error exit', async () => {
+    const failure = new AudioError('AUDIO_UNAVAILABLE');
     const dependencies = createDependencies();
-    const events: string[] = [];
-    dependencies.renderAudio.mockImplementation((received) => {
-      events.push('render');
-      expect(received.audio).toBeNull();
-    });
+    const closeOpeningResources = vi.fn(() => Promise.resolve());
 
     await expect(
       runCliPlayback({
-        openPlayback: () => {
-          events.push('open');
-          return Promise.resolve(playback);
-        },
-        closeOpeningResources: () => Promise.resolve(),
+        openPlayback: () => Promise.reject(failure),
+        closeOpeningResources,
         fallback: false,
         renderMode: 'kitty',
         muted: false,
         dependencies,
       }),
-    ).resolves.toBe('rendered');
-    expect(events).toEqual(['open', 'render']);
+    ).resolves.toBe('exit-error');
+    expect(closeOpeningResources).toHaveBeenCalledOnce();
+    expect(dependencies.reportError).toHaveBeenCalledWith(failure);
+    expect(dependencies.renderAudio).not.toHaveBeenCalled();
     expect(dependencies.detectReasons).not.toHaveBeenCalled();
-    expect(dependencies.resolveFallbackMode).not.toHaveBeenCalled();
     expect(dependencies.createVisualScreen).not.toHaveBeenCalled();
     expect(dependencies.createFallbackScreen).not.toHaveBeenCalled();
   });

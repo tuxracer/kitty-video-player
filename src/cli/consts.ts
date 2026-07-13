@@ -26,6 +26,8 @@ export const AUDIO_VISUAL_MODES: readonly AudioVisualMode[] = [
   'none',
 ];
 
+export const AUDIO_UNAVAILABLE_ERROR_MESSAGE = 'audio output is unavailable';
+
 /** Exit code for success paths (help, version, graceful unsupported-terminal exit) */
 export const EXIT_OK = 0;
 

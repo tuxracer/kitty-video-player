@@ -35,16 +35,24 @@ export const useAudioVisualRenderer = ({
     }
 
     const requestFrame = (queue = false): void => {
-      if (stopped || !screen.isWritable()) {
+      let frameRequest: Promise<Uint8Array | null>;
+      try {
+        if (stopped || !screen.isWritable()) {
+          return;
+        }
+        if (inFlight) {
+          repaintPending ||= queue;
+          return;
+        }
+        inFlight = true;
+        frameRequest = source.getFrameAt(callbacksRef.current.getElapsedMs());
+      } catch (error) {
+        stopped = true;
+        inFlight = false;
+        callbacksRef.current.onVisualError(error);
         return;
       }
-      if (inFlight) {
-        repaintPending ||= queue;
-        return;
-      }
-      inFlight = true;
-      void source
-        .getFrameAt(callbacksRef.current.getElapsedMs())
+      void frameRequest
         .then((frame) => {
           if (stopped || timelineRef.current !== timeline) {
             return;
@@ -85,12 +93,12 @@ export const useAudioVisualRenderer = ({
   }, [info, screen, source]);
 
   useEffect(() => {
-    if (!playing || info === null) {
+    if ((!playing && ready) || info === null) {
       return;
     }
     const interval = setInterval(() => requestRef.current(), Math.round(MS_PER_SECOND / info.fps));
     return () => clearInterval(interval);
-  }, [info, playing]);
+  }, [info, playing, ready]);
 
   useEffect(() => {
     const previous = regionRef.current;

@@ -11,8 +11,8 @@ export type AudioErrorCode = 'NO_AUDIO_STREAM' | 'AUDIO_UNAVAILABLE';
 export class AudioError extends Error {
   readonly code: AudioErrorCode;
 
-  constructor(code: AudioErrorCode) {
-    super(code);
+  constructor(code: AudioErrorCode, message: string = code) {
+    super(message);
     this.name = 'AudioError';
     this.code = code;
   }
